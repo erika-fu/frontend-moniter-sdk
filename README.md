@@ -25,3 +25,7 @@ npm run check
 ## Usage
 
 The public package API starts in `src/index.ts`.
+
+## License
+
+MIT
