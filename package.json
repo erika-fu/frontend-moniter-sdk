@@ -29,5 +29,8 @@
     "monitoring",
     "sdk",
     "typescript"
-  ]
+  ],
+  "dependencies": {
+    "web-vitals": "^6.2.2"
+  }
 }
