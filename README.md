@@ -26,7 +26,37 @@ npm run check
 
 ## Usage
 
-The public package API starts in `src/index.ts`.
+Initialize browser performance and runtime error monitoring with one callback:
+
+```ts
+import frontendMonitor from "frontend-moniter-sdk";
+
+frontendMonitor.init({
+  onReport(report) {
+    navigator.sendBeacon("/monitor", JSON.stringify(report));
+  },
+});
+```
+
+Install Vue error capture through the application plugin API:
+
+```ts
+app.use(frontendMonitor, { onReport });
+```
+
+Forward errors from a React Error Boundary:
+
+```ts
+componentDidCatch(error, info) {
+  frontendMonitor.errorBoundary(error, info);
+}
+```
+
+The public package API starts in `src/index.ts`. `init` enables all performance
+and browser error monitors by default. Call it once during application startup.
+Pass `performance: false` or `error: false` to skip either group during that
+initialization, or pass
+`performance: { monitors: ["fcp", "lcp"] }` to select performance observers.
 
 The production build uses Vite library mode for the browser-ready ESM bundle
 and TypeScript for declaration files. The demo imports the source

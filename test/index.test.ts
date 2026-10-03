@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  errorBoundary,
+  init,
+  install,
+  observeError,
   observeFetch,
   observePerformance,
   observeXHR,
@@ -15,5 +19,12 @@ describe("SDK entry point", () => {
     expect(observePerformance).toBeTypeOf("function");
     expect(observeFetch).toBeTypeOf("function");
     expect(observeXHR).toBeTypeOf("function");
+  });
+
+  it("exports the SDK and framework error APIs", () => {
+    expect(init).toBeTypeOf("function");
+    expect(observeError).toBeTypeOf("function");
+    expect(install).toBeTypeOf("function");
+    expect(errorBoundary).toBeTypeOf("function");
   });
 });
