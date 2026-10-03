@@ -36,7 +36,7 @@ describe("observeLoad", () => {
     expect(onReport).toHaveBeenCalledWith({
       type: "performance",
       subType: "load",
-      startTime: 125,
+      duration: 125,
       pageUrl: "https://example.com/",
     });
   });
@@ -70,7 +70,6 @@ describe("observeLoad", () => {
     expect(addEventListener).toHaveBeenCalledWith(
       "load",
       expect.any(Function),
-      true,
     );
 
     loadHandler?.({ timeStamp: 120 } as Event);
@@ -79,7 +78,6 @@ describe("observeLoad", () => {
     expect(removeEventListener).toHaveBeenCalledWith(
       "load",
       loadHandler,
-      true,
     );
   });
 

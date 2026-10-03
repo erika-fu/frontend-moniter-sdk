@@ -138,7 +138,15 @@ export function observeFetch(onReport?: FetchReportHandler): void {
 }
 
 /**
- * 停止监听并恢复安装监听器之前的 window.fetch。
+ * 停止 Fetch 请求监听，并尝试恢复安装监听器之前的 `window.fetch`。
+ *
+ * 只有当 `window.fetch` 仍然是本模块安装的包装函数时才会恢复原始函数。
+ * 如果监听期间其他代码再次替换了 `window.fetch`，这里不会覆盖该替换，
+ * 以免破坏其他监控工具或业务代码的运行状态。
+ *
+ * 无论是否执行恢复，都会清空本模块保存的原始函数、包装函数和上报回调，
+ * 因此可以安全地重复调用。已经发出但尚未完成的请求仍会正常完成，但其
+ * 后续结果不会再通过此前注册的回调上报。
  */
 export function stopObserveFetch(): void {
     if (

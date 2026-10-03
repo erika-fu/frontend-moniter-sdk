@@ -9,7 +9,7 @@ export interface LoadReportData {
     /** 监控数据的二级分类。 */
     subType: "load";
     /** 从页面导航开始到 load 事件结束的耗时，单位为毫秒。 */
-    startTime: number;
+    duration: number;
     /** 产生该性能数据的页面地址。 */
     pageUrl: string;
 }
@@ -42,7 +42,7 @@ function reportLoad(
         const reportData: LoadReportData = {
             type: "performance",
             subType: "load",
-            startTime: loadTime,
+            duration: loadTime,
             pageUrl: window.location.href,
         };
 
@@ -76,7 +76,7 @@ export function observeLoad(
     // 保存事件时间戳作为旧浏览器缺少 Navigation Timing 时的兜底值。
     const onLoad = (event: Event) => {
         reportLoad(onReport, event.timeStamp);
-        window.removeEventListener("load", onLoad, true);
+        window.removeEventListener("load", onLoad);
     };
-    window.addEventListener("load", onLoad, true);
+    window.addEventListener("load", onLoad);
 }

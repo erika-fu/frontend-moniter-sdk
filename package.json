@@ -11,15 +11,20 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "dev": "vite --host",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build"
+    "typecheck": "vue-tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build",
+    "demo": "vite --host --port 4173"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "vite": "^5.4.21",
+    "vitest": "^2.1.8",
+    "vue-tsc": "^2.2.12"
   },
   "engines": {
     "node": ">=18"
@@ -31,6 +36,8 @@
     "typescript"
   ],
   "dependencies": {
+    "vue": "^3.5.43",
+    "vue-router": "^4.6.4",
     "web-vitals": "^6.2.2"
   }
 }

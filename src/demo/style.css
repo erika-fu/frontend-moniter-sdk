@@ -1,0 +1,369 @@
+:root {
+    color: #172033;
+    background: #f4f7fb;
+    font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+}
+
+button {
+    font: inherit;
+}
+
+.app-shell {
+    width: min(1180px, calc(100% - 40px));
+    margin: 0 auto;
+    padding: 48px 0 64px;
+}
+
+.topbar,
+.workspace-heading,
+.report-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+.brand {
+    display: grid;
+    gap: 4px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.brand strong {
+    font-size: 28px;
+}
+
+.eyebrow,
+.section-kicker {
+    margin: 0 0 10px;
+    color: #54708f;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+}
+
+.main-nav {
+    display: flex;
+    gap: 24px;
+    margin: 28px 0 4px;
+    border-bottom: 1px solid #dce4ee;
+}
+
+.main-nav a {
+    padding: 0 0 12px;
+    border-bottom: 2px solid transparent;
+    color: #718096;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+.main-nav a:hover,
+.main-nav a.router-link-active {
+    border-color: #315f94;
+    color: #285987;
+}
+
+h1,
+h2,
+h3,
+p {
+    margin-top: 0;
+}
+
+h1 {
+    margin-bottom: 10px;
+    font-size: clamp(30px, 5vw, 48px);
+    line-height: 1.1;
+}
+
+h2 {
+    margin-bottom: 0;
+    font-size: 24px;
+}
+
+.workspace h1,
+.about-page h1 {
+    margin-bottom: 0;
+    font-size: 24px;
+}
+
+.subtitle {
+    max-width: 560px;
+    margin-bottom: 0;
+    color: #607087;
+    line-height: 1.7;
+}
+
+.live-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: #287650;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #3ca36e;
+    box-shadow: 0 0 0 5px #d9f0e2;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin: 42px 0 34px;
+}
+
+.summary-item {
+    min-height: 142px;
+    padding: 22px;
+    border: 1px solid #dce4ee;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.summary-label,
+.summary-hint {
+    display: block;
+    color: #718096;
+    font-size: 13px;
+}
+
+.summary-item strong {
+    display: block;
+    margin: 12px 0 8px;
+    color: #19253a;
+    font-size: 28px;
+}
+
+.summary-action strong {
+    font-size: 22px;
+}
+
+.workspace {
+    padding: 28px;
+    border-top: 1px solid #dce4ee;
+    background: #fff;
+}
+
+.page-workspace {
+    margin-top: 34px;
+}
+
+.clear-button,
+.filter-button {
+    cursor: pointer;
+    border: 1px solid #ccd7e4;
+    border-radius: 6px;
+    background: #fff;
+    color: #53647a;
+}
+
+.clear-button {
+    padding: 9px 14px;
+    font-size: 13px;
+}
+
+.clear-button:hover:not(:disabled),
+.filter-button:hover {
+    border-color: #3b6ea8;
+    color: #285987;
+}
+
+.clear-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 24px 0;
+}
+
+.filter-button {
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+.filter-button span {
+    margin-left: 5px;
+    color: #8a98aa;
+}
+
+.filter-button.active {
+    border-color: #315f94;
+    background: #315f94;
+    color: #fff;
+}
+
+.filter-button.active span {
+    color: #dcecff;
+}
+
+.empty-state {
+    display: grid;
+    min-height: 280px;
+    place-items: center;
+    align-content: center;
+    border: 1px dashed #cad6e3;
+    text-align: center;
+}
+
+.empty-mark {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    margin-bottom: 16px;
+    border-radius: 50%;
+    background: #edf2f7;
+    color: #718096;
+    font-weight: 700;
+}
+
+.empty-state h3 {
+    margin-bottom: 8px;
+    font-size: 17px;
+}
+
+.empty-state p {
+    margin-bottom: 0;
+    color: #718096;
+    font-size: 14px;
+}
+
+.report-list {
+    display: grid;
+    gap: 12px;
+}
+
+.about-lead {
+    max-width: 680px;
+    margin: 16px 0 28px;
+    color: #607087;
+    line-height: 1.7;
+}
+
+.about-lead code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #edf2f7;
+    color: #285987;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 0.9em;
+}
+
+.about-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.about-grid article {
+    padding: 20px;
+    border: 1px solid #dce4ee;
+    border-radius: 6px;
+}
+
+.about-grid strong {
+    display: block;
+    margin: 12px 0 8px;
+    color: #19253a;
+    font-size: 18px;
+}
+
+.about-grid p {
+    margin-bottom: 0;
+    color: #718096;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.report-item {
+    overflow: hidden;
+    border: 1px solid #dce4ee;
+    border-radius: 6px;
+}
+
+.report-meta {
+    min-width: 0;
+    padding: 12px 14px;
+    background: #f7f9fc;
+}
+
+.report-type {
+    color: #285987;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.report-page {
+    overflow: hidden;
+    color: #8794a5;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+pre {
+    overflow-x: auto;
+    margin: 0;
+    padding: 16px;
+    background: #172033;
+    color: #d9e8f7;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+    .app-shell {
+        width: min(100% - 24px, 1180px);
+        padding-top: 28px;
+    }
+
+    .topbar,
+    .workspace-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .brand strong {
+        font-size: 24px;
+    }
+
+    .summary-grid {
+        grid-template-columns: 1fr;
+        margin-top: 30px;
+    }
+
+    .workspace {
+        padding: 20px 14px;
+    }
+
+    .about-grid {
+        grid-template-columns: 1fr;
+    }
+}
