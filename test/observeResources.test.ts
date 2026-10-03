@@ -117,7 +117,6 @@ describe("observeResources", () => {
     expect(addEventListener).toHaveBeenCalledWith(
       "load",
       expect.any(Function),
-      true,
     );
 
     loadHandler?.();
@@ -126,7 +125,6 @@ describe("observeResources", () => {
     expect(removeEventListener).toHaveBeenCalledWith(
       "load",
       loadHandler,
-      true,
     );
   });
 

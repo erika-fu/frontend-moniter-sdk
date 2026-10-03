@@ -117,7 +117,7 @@ export function observeResources(
     // load 后只采集一次，并及时移除事件监听器。
     const onLoad = () => {
         observeLoadedResources(onReport);
-        window.removeEventListener("load", onLoad, true);
+        window.removeEventListener("load", onLoad);
     };
-    window.addEventListener("load", onLoad, true);
+    window.addEventListener("load", onLoad);
 }
