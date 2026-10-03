@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
+import type { PerformanceMonitoringOptions } from "../src/performance/index.js";
 
 const {
   observeError,
@@ -22,7 +30,12 @@ vi.mock("../src/performance/index.js", () => ({
   observePerformance,
 }));
 
-import sdk, { init } from "../src/index.js";
+import sdk, { init, type SDKOptions } from "../src/index.js";
+
+type SDKPerformanceOptions = Exclude<
+  SDKOptions["performance"],
+  false | undefined
+>;
 
 describe("SDK initialization", () => {
   beforeEach(() => {
@@ -39,6 +52,15 @@ describe("SDK initialization", () => {
     expect(observeError).toHaveBeenCalledWith(onReport);
   });
 
+  it("reuses the performance module configuration type", () => {
+    expectTypeOf<SDKPerformanceOptions>().toEqualTypeOf<
+      Omit<PerformanceMonitoringOptions, "onReport">
+    >();
+    expectTypeOf<
+      true extends SDKOptions["performance"] ? true : false
+    >().toEqualTypeOf<false>();
+  });
+
   it("supports selecting performance monitors and disabling runtime errors", () => {
     const onReport = vi.fn();
 
@@ -53,6 +75,20 @@ describe("SDK initialization", () => {
       onReport,
     });
     expect(observeError).not.toHaveBeenCalled();
+  });
+
+  it("ignores a module report handler carried by a typed variable", () => {
+    const moduleReport = vi.fn();
+    const performanceOptions: PerformanceMonitoringOptions = {
+      monitors: ["fcp"],
+      onReport: moduleReport,
+    };
+
+    init({ performance: performanceOptions });
+
+    expect(observePerformance).toHaveBeenCalledWith({
+      monitors: ["fcp"],
+    });
   });
 
   it("can disable performance monitoring", () => {

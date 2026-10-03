@@ -12,7 +12,7 @@ import {
 import { setFrameworkErrorReportHandler } from "./error/framework.js";
 import {
     observePerformance,
-    type PerformanceMonitor,
+    type PerformanceMonitoringOptions,
     type PerformanceReportData,
 } from "./performance/index.js";
 
@@ -30,11 +30,7 @@ export interface SDKOptions {
     /** 本次初始化是否启动错误监听；默认启动。 */
     error?: boolean;
     /** 性能监听配置；设为 false 时本次不启动，默认启动全部性能监听。 */
-    performance?:
-        | boolean
-        | {
-            monitors?: readonly PerformanceMonitor[];
-        };
+    performance?: false | Omit<PerformanceMonitoringOptions, "onReport">;
 }
 
 /**
@@ -46,10 +42,12 @@ export function init(options: SDKOptions = {}): void {
     setFrameworkErrorReportHandler(onReport);
 
     if (options.performance !== false) {
-        const performanceOptions =
-            typeof options.performance === "object"
-                ? options.performance
-                : {};
+        const configuredPerformanceOptions: PerformanceMonitoringOptions =
+            options.performance ?? {};
+        const {
+            onReport: _moduleReportHandler,
+            ...performanceOptions
+        } = configuredPerformanceOptions;
         observePerformance({
             ...performanceOptions,
             ...(onReport ? { onReport } : {}),
