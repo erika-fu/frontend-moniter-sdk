@@ -1,7 +1,11 @@
+import { report } from "../report.js";
+
 export function reportSafely<T>(
     onReport: ((reportData: T) => void) | undefined,
     reportData: T,
 ): void {
+    // 所有运行时错误都通过统一 report 函数传输。
+    report(reportData);
     try {
         onReport?.(reportData);
     } catch {

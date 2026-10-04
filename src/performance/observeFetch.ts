@@ -51,6 +51,8 @@ function getRequestDetails(
 }
 
 function reportFetch(reportData: FetchReportData): void {
+    // Fetch 数据和其他性能指标使用同一个传输入口。
+    report(reportData);
     // 监控逻辑不能因上报回调异常而改变 Fetch Promise 的状态。
     try {
         reportHandler?.(reportData);
@@ -162,3 +164,4 @@ export function stopObserveFetch(): void {
     wrappedFetch = undefined;
     reportHandler = undefined;
 }
+import { report } from "../report.js";

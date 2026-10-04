@@ -255,7 +255,8 @@ export function createReportHandler<T>(
     return (data: T) => {
         if (config.url) {
             try {
-                lazyReportBatch(data);
+                // 统一处理器也直接走 report，避免行为、性能和错误数据路径不一致。
+                report(data);
             } catch {
                 // 内置上报失败时仍需执行调用方的回调。
             }
@@ -271,5 +272,6 @@ export function configureReportHandler<T>(
     options: ReportingOptions<T>,
 ): ReportCallback<T> | undefined {
     setConfig(options);
-    return createReportHandler(options.onReport);
+    // 监控模块会直接调用 report；这里仅返回调用方回调，避免重复上报。
+    return options.onReport;
 }

@@ -115,6 +115,8 @@ export function observeXHR(onReport?: XHRReportHandler): void {
             this.removeEventListener("loadend", onLoadEnd, true);
             requestMetadata.delete(this);
 
+            // XHR 数据和其他性能指标使用同一个传输入口。
+            report(reportData);
             // 监控逻辑不能因上报回调异常而影响业务请求。
             try {
                 reportHandler?.(reportData);
@@ -163,3 +165,4 @@ export function stopObserveXHR(): void {
     wrappedSend = undefined;
     reportHandler = undefined;
 }
+import { report } from "../report.js";

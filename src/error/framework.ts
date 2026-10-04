@@ -1,5 +1,4 @@
 import {
-    createReportHandler,
     setConfig,
     type ReportConfigOptions,
 } from "../report.js";
@@ -103,12 +102,7 @@ export function install(
     options: FrameworkErrorMonitoringOptions = {},
 ): void {
     setConfig(options);
-    const configuredReportHandler = options.onReport
-        ? createReportHandler(options.onReport)
-        : undefined;
-    if (!options.onReport && !frameworkReportHandler) {
-        frameworkReportHandler = createReportHandler();
-    }
+    const configuredReportHandler = options.onReport;
     const config = host.config;
     const existingState = vueInstallStates.get(config);
 
@@ -149,9 +143,7 @@ export function errorBoundary(
     info: unknown,
     onReport?: FrameworkErrorReportHandler,
 ): void {
-    const reportHandler = onReport
-        ? createReportHandler(onReport)
-        : frameworkReportHandler;
+    const reportHandler = onReport ?? frameworkReportHandler;
     reportSafely(reportHandler, {
         type: "error",
         subType: "react",

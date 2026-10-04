@@ -140,6 +140,27 @@ describe("reporting", () => {
     expect(onReport).toHaveBeenCalledWith(circular);
   });
 
+  it("uses the unified report transport for handler data", () => {
+    const sendBeacon = vi.fn<(url: string, data: string) => boolean>(
+      () => true,
+    );
+    const onReport = vi.fn();
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 10 });
+
+    const handler = createReportHandler(onReport);
+    handler?.({ type: "performance", subType: "load" });
+
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(onReport).toHaveBeenCalledWith({
+      type: "performance",
+      subType: "load",
+    });
+  });
+
   it("keeps a batch when sendBeacon rejects it", () => {
     const sendBeacon = vi
       .fn<(url: string, data: string) => boolean>()
