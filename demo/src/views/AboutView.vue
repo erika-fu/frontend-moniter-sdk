@@ -3,8 +3,9 @@
         <p class="section-kicker">ABOUT THE SDK</p>
         <h1>SDK 说明</h1>
         <p class="about-lead">
-            这个 Vue 页面直接使用 <code>src/performance</code> 源码运行，Vite
-            负责 TypeScript、Vue SFC 和依赖解析。
+            这个独立 Vue 项目通过 npm 包入口使用
+            <code>frontend-moniter-sdk</code>，拥有自己的 TypeScript、Vite
+            配置和构建产物。
         </p>
         <div class="about-grid">
             <article>

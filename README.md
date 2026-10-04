@@ -12,17 +12,19 @@ TypeScript SDK for frontend monitoring.
 ```bash
 npm install
 npm run check
+
+cd demo
+npm install
+npm run build
 ```
 
 ## Commands
 
 - `npm run build` bundles the SDK and its runtime dependencies into `dist/`
-- `npm run dev` starts the Vite development server with source-module HMR
 - `npm test` runs the test suite once
 - `npm run test:watch` runs Vitest in watch mode
 - `npm run typecheck` checks TypeScript without emitting files
 - `npm run check` runs type checking, tests, and the production build
-- `npm run demo` starts the demo on port `4173`
 - `npm pack --dry-run` previews the files that will be published
 - `npm publish` runs `prepublishOnly`, then publishes the ESM package
 
@@ -72,15 +74,21 @@ The production build uses Vite library mode for the browser-ready ESM bundle
 and TypeScript for declaration files. The package exposes the SDK through its
 root ESM entry and declares `web-vitals` as an external runtime dependency.
 Installing the package therefore installs `web-vitals` in the business
-application, while Vue and Vue Router remain development-only demo
-dependencies. The demo imports the source `src/performance` module directly
-during development, so changes can be applied through Vite HMR without
-rebuilding `dist`.
+application. Vue remains a development dependency only because the SDK's Vue
+integration is covered by tests.
 
-To open the demo, run `npm run demo`, then visit
-`http://localhost:4173/src/demo/index.html`. Do not open
-`src/demo/index.html` directly with `file://`; browsers block module imports
-from local files, and browsers do not execute TypeScript source files directly.
+The `demo/` directory is an independent Vue application with its own package
+manifest, lock file, TypeScript configuration, Vite configuration, and build
+output. It consumes the SDK through the package entry instead of importing
+files from `src/`. Build the SDK before starting or building the demo:
+
+```bash
+npm run build
+npm install --prefix demo
+npm --prefix demo run dev
+```
+
+Then visit `http://localhost:4173/`.
 
 The Vue demo uses hash routing:
 

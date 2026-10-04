@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const packageManifest = JSON.parse(
@@ -35,9 +35,16 @@ describe("package distribution metadata", () => {
         expect(packageManifest.dependencies).toMatchObject({
             "web-vitals": expect.any(String),
         });
-        expect(packageManifest.devDependencies).toMatchObject({
-            vue: expect.any(String),
-            "vue-router": expect.any(String),
-        });
+    });
+
+    it("keeps the Vue application tooling out of the SDK package", () => {
+        expect(existsSync(new URL("../src/demo", import.meta.url))).toBe(false);
+        expect(packageManifest.devDependencies).not.toHaveProperty(
+            "@vitejs/plugin-vue",
+        );
+        expect(packageManifest.devDependencies).not.toHaveProperty(
+            "vue-router",
+        );
+        expect(packageManifest.devDependencies).not.toHaveProperty("vue-tsc");
     });
 });

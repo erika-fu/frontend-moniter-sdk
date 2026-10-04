@@ -1,5 +1,5 @@
 import { computed, ref } from "vue";
-import type { PerformanceReportData } from "../performance/index.js";
+import type { PerformanceReportData } from "frontend-moniter-sdk";
 
 export const reports = ref<PerformanceReportData[]>([]);
 
