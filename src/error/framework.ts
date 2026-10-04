@@ -131,8 +131,9 @@ export function install(
         return previousHandler?.call(this, error, instance, info);
     };
 
-    vueInstallStates.set(config, state);
     config.errorHandler = state.installedHandler;
+    // 只有处理器成功安装后才记录状态，失败时允许后续调用重试。
+    vueInstallStates.set(config, state);
 }
 
 /**

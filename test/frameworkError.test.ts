@@ -4,6 +4,7 @@ import {
   errorBoundary,
   install,
   type ErrorReportData,
+  type VueErrorHandlerHost,
 } from "../src/error/index.js";
 import { setFrameworkErrorReportHandler } from "../src/error/framework.js";
 import {
@@ -75,6 +76,67 @@ describe("framework error monitoring", () => {
 
     expect(firstReport).not.toHaveBeenCalled();
     expect(latestReport).toHaveBeenCalledOnce();
+  });
+
+  it("installs each Vue app independently", () => {
+    const firstReport = vi.fn();
+    const secondReport = vi.fn();
+    const firstApp: VueErrorHandlerHost = {
+      config: { errorHandler: null },
+    };
+    const secondApp: VueErrorHandlerHost = {
+      config: { errorHandler: null },
+    };
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/" },
+      performance: { now: () => 1 },
+    });
+
+    install(firstApp, { onReport: firstReport });
+    install(secondApp, { onReport: secondReport });
+
+    firstApp.config.errorHandler?.(new Error("first"), null, "setup");
+    secondApp.config.errorHandler?.(new Error("second"), null, "setup");
+
+    expect(firstReport).toHaveBeenCalledOnce();
+    expect(secondReport).toHaveBeenCalledOnce();
+  });
+
+  it("allows retrying when handler installation fails", () => {
+    const onReport = vi.fn();
+    let shouldFail = true;
+    let installedHandler:
+      | ((error: unknown, instance: unknown, info: string) => unknown)
+      | undefined;
+    const config: {
+      errorHandler?: (
+        error: unknown,
+        instance: unknown,
+        info: string,
+      ) => unknown;
+    } = {};
+
+    Object.defineProperty(config, "errorHandler", {
+      configurable: true,
+      get: () => installedHandler,
+      set: (handler) => {
+        if (shouldFail) {
+          throw new Error("install failed");
+        }
+        installedHandler = handler;
+      },
+    });
+
+    const app = { config };
+
+    expect(() => install(app)).toThrow("install failed");
+
+    shouldFail = false;
+    install(app, { onReport });
+    app.config.errorHandler?.(new Error("retried"), null, "setup");
+
+    expect(onReport).toHaveBeenCalledOnce();
   });
 
   it("accepts a Vue 3 application instance", () => {
