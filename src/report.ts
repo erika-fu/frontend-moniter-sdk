@@ -32,10 +32,16 @@ const originalSend =
         ? undefined
         : XMLHttpRequest.prototype.send;
 
+/**
+ * 为每个上报载荷生成便于服务端去重和追踪的标识。
+ */
 function generateUniqueId(): string {
     return `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/**
+ * 将采集数据包装为统一的上报载荷。
+ */
 function createEnvelope<T>(data: T): ReportEnvelope<T> {
     return {
         id: generateUniqueId(),
@@ -43,6 +49,9 @@ function createEnvelope<T>(data: T): ReportEnvelope<T> {
     };
 }
 
+/**
+ * 隔离传输回调异常，避免监控逻辑影响页面业务。
+ */
 function invokeSafely(callback: () => void): void {
     try {
         callback();
@@ -51,6 +60,9 @@ function invokeSafely(callback: () => void): void {
     }
 }
 
+/**
+ * 优先在浏览器空闲阶段执行传输，不支持时退化为异步任务。
+ */
 function schedule(callback: () => void): void {
     if (typeof window === "undefined") {
         return;
@@ -66,6 +78,9 @@ function schedule(callback: () => void): void {
     setTimeout(() => invokeSafely(callback), 0);
 }
 
+/**
+ * 判断当前运行环境是否支持 Beacon 传输。
+ */
 export function isSupportSendBeacon(): boolean {
     return (
         typeof navigator !== "undefined" &&
@@ -73,6 +88,9 @@ export function isSupportSendBeacon(): boolean {
     );
 }
 
+/**
+ * 通过图片查询参数发送已经序列化的上报载荷。
+ */
 export function imgRequest(data: string): void {
     if (typeof Image === "undefined") {
         return;
@@ -83,12 +101,18 @@ export function imgRequest(data: string): void {
     image.src = `${config.url}${separator}data=${encodeURIComponent(data)}`;
 }
 
+/**
+ * 在合适的调度时机通过 sendBeacon 发送上报载荷。
+ */
 export function beaconRequest(data: string): void {
     schedule(() => {
         navigator.sendBeacon(config.url, data);
     });
 }
 
+/**
+ * 使用监控安装前保存的 XHR 方法发送载荷，避免采集上报请求自身。
+ */
 export function xhrRequest(data: string): void {
     schedule(() => {
         if (
@@ -165,6 +189,9 @@ export function lazyReportBatch(data: unknown): boolean {
     return true;
 }
 
+/**
+ * 清空尚未达到批量阈值的待上报数据。
+ */
 export function clearReportQueue(): void {
     reportQueue.length = 0;
 }
@@ -191,6 +218,9 @@ export function createReportHandler<T>(
     };
 }
 
+/**
+ * 合并上报配置并创建供各监控模块复用的处理器。
+ */
 export function configureReportHandler<T>(
     options: ReportingOptions<T>,
 ): ReportCallback<T> | undefined {

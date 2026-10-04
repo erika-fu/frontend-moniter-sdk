@@ -51,10 +51,16 @@ export function setConfig(options: ReportConfigOptions = {}): void {
     }
 }
 
+/**
+ * 返回当前上报配置的只读副本，避免调用方直接修改内部状态。
+ */
 export function getReportConfig(): Readonly<ReportConfig> {
     return { ...config };
 }
 
+/**
+ * 将上报配置恢复为 SDK 默认值。
+ */
 export function resetReportConfig(): void {
     Object.assign(config, DEFAULT_CONFIG);
 }

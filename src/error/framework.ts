@@ -57,6 +57,9 @@ interface VueInstallState {
 const vueInstallStates = new WeakMap<object, VueInstallState>();
 let frameworkReportHandler: FrameworkErrorReportHandler | undefined;
 
+/**
+ * 将不同形态的异常值转换为适合上报的文本。
+ */
 function getErrorText(error: unknown): string {
     if (error && typeof error === "object") {
         const candidate = error as { message?: unknown; stack?: unknown };
@@ -70,6 +73,9 @@ function getErrorText(error: unknown): string {
     return String(error);
 }
 
+/**
+ * 获取框架异常发生时的高精度时间，不可用时回退到系统时间。
+ */
 function getStartTime(): number {
     if (
         typeof window !== "undefined" &&
@@ -117,6 +123,7 @@ export function install(
         onReport: configuredReportHandler,
     };
 
+    // 包装框架错误处理器，在上报后继续调用应用原有处理器。
     state.installedHandler = function (error, instance, info) {
         reportSafely(state.onReport ?? frameworkReportHandler, {
             type: "error",
