@@ -3,6 +3,8 @@ import {
   errorBoundary,
   init,
   install,
+  observeBehavior,
+  observeClick,
   observeError,
   observeFetch,
   observePerformance,
@@ -21,6 +23,11 @@ describe("SDK entry point", () => {
     expect(observePerformance).toBeTypeOf("function");
     expect(observeFetch).toBeTypeOf("function");
     expect(observeXHR).toBeTypeOf("function");
+  });
+
+  it("re-exports the behavior monitoring API", () => {
+    expect(observeBehavior).toBeTypeOf("function");
+    expect(observeClick).toBeTypeOf("function");
   });
 
   it("exports the SDK and framework error APIs", () => {
