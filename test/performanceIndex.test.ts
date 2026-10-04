@@ -49,21 +49,20 @@ describe("performance entry point", () => {
     expect(observeXHR).toHaveBeenCalledWith(undefined);
   });
 
-  it("starts only the configured monitors", () => {
+  it("starts every monitor with the report handler", () => {
     const onReport = vi.fn();
 
     namedObservePerformance({
-      monitors: ["fcp", "lcp", "xhr"],
       onReport,
     });
 
     expect(observeFCP).toHaveBeenCalledWith(onReport);
     expect(observeLCP).toHaveBeenCalledWith(onReport);
     expect(observeXHR).toHaveBeenCalledWith(onReport);
-    expect(observeFetch).not.toHaveBeenCalled();
-    expect(observeResources).not.toHaveBeenCalled();
-    expect(observeLoad).not.toHaveBeenCalled();
-    expect(observePaint).not.toHaveBeenCalled();
+    expect(observeFetch).toHaveBeenCalledWith(onReport);
+    expect(observeResources).toHaveBeenCalledWith(onReport);
+    expect(observeLoad).toHaveBeenCalledWith(onReport);
+    expect(observePaint).toHaveBeenCalledWith(onReport);
   });
 
 });

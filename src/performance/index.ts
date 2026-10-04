@@ -32,15 +32,6 @@ export * from "./observePaint.js";
 export * from "./observeResources.js";
 export * from "./observeXHR.js";
 
-export type PerformanceMonitor =
-    | "paint"
-    | "fcp"
-    | "lcp"
-    | "load"
-    | "resource"
-    | "fetch"
-    | "xhr";
-
 export type PerformanceReportData =
     | FirstPaintReportData
     | FirstContentfulPaintReportData
@@ -54,55 +45,27 @@ export type PerformanceReportHandler = (
     reportData: PerformanceReportData,
 ) => void;
 
-const ALL_MONITORS: readonly PerformanceMonitor[] = [
-    "paint",
-    "fcp",
-    "lcp",
-    "load",
-    "resource",
-    "fetch",
-    "xhr",
-];
-
 /**
  * 性能监听配置。
  */
 export interface PerformanceMonitoringOptions {
-    /** 需要启用的监控项；不传时启用全部监控。 */
-    monitors?: readonly PerformanceMonitor[];
     /** 接收全部性能监控数据。 */
     onReport?: PerformanceReportHandler;
 }
 
 /**
- * 根据配置启动性能监听；默认启动全部监控项。
+ * 启动全部性能监听。
  */
 export function observePerformance(
     options: PerformanceMonitoringOptions = {},
 ): void {
-    const monitors = new Set(options.monitors ?? ALL_MONITORS);
-
-    if (monitors.has("paint")) {
-        observePaint(options.onReport);
-    }
-    if (monitors.has("fcp")) {
-        observeFCP(options.onReport);
-    }
-    if (monitors.has("lcp")) {
-        observeLCP(options.onReport);
-    }
-    if (monitors.has("load")) {
-        observeLoad(options.onReport);
-    }
-    if (monitors.has("resource")) {
-        observeResources(options.onReport);
-    }
-    if (monitors.has("fetch")) {
-        observeFetch(options.onReport);
-    }
-    if (monitors.has("xhr")) {
-        observeXHR(options.onReport);
-    }
+    observePaint(options.onReport);
+    observeFCP(options.onReport);
+    observeLCP(options.onReport);
+    observeLoad(options.onReport);
+    observeResources(options.onReport);
+    observeFetch(options.onReport);
+    observeXHR(options.onReport);
 }
 
 export default observePerformance;

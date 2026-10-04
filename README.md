@@ -38,9 +38,6 @@ frontendMonitor.init({
   appId: "web",
   userId: "user-1",
   batchSize: 5,
-  onReport(report) {
-    console.log("monitor report", report);
-  },
 });
 ```
 
@@ -64,11 +61,10 @@ componentDidCatch(error, info) {
 }
 ```
 
-The public package API starts in `src/index.ts`. `init` enables all performance
-and browser error monitors by default. Call it once during application startup.
-Pass `performance: false` or `error: false` to skip either group during that
-initialization, or pass
-`performance: { monitors: ["fcp", "lcp"] }` to select performance observers.
+The public package API starts in `src/index.ts`. `init` only updates the default
+reporting configuration; it does not start monitors or select individual
+metrics. Call the monitor APIs directly when the application needs to start
+collection.
 
 The production build uses Vite library mode for the browser-ready ESM bundle
 and TypeScript for declaration files. The demo imports the source

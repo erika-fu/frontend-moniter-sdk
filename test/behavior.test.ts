@@ -189,7 +189,7 @@ describe("behavior monitoring", () => {
     );
   });
 
-  it("starts only the selected behavior monitor", () => {
+  it("starts every behavior monitor", () => {
     const addEventListener = vi.fn();
     const onReport = vi.fn<(data: BehaviorReportData) => void>();
 
@@ -203,11 +203,29 @@ describe("behavior monitoring", () => {
     vi.stubGlobal("crypto", { randomUUID: () => "selected-pv" });
 
     observeBehavior({
-      monitors: ["pv"],
       onReport,
     });
 
-    expect(addEventListener).not.toHaveBeenCalled();
+    expect(addEventListener).toHaveBeenCalledWith(
+      "mousedown",
+      expect.any(Function),
+      true,
+    );
+    expect(addEventListener).toHaveBeenCalledWith(
+      "touchstart",
+      expect.any(Function),
+      true,
+    );
+    expect(addEventListener).toHaveBeenCalledWith(
+      "hashchange",
+      expect.any(Function),
+      true,
+    );
+    expect(addEventListener).toHaveBeenCalledWith(
+      "popstate",
+      expect.any(Function),
+      true,
+    );
     expect(onReport).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "behavior",
