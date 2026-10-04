@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearReportQueue,
   createReportHandler,
+  flushReportQueue,
   getReportConfig,
   lazyReportBatch,
   report,
@@ -137,5 +138,42 @@ describe("reporting", () => {
     const handler = createReportHandler(onReport);
     expect(() => handler?.(circular)).not.toThrow();
     expect(onReport).toHaveBeenCalledWith(circular);
+  });
+
+  it("keeps a batch when sendBeacon rejects it", () => {
+    const sendBeacon = vi
+      .fn<(url: string, data: string) => boolean>()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+      requestIdleCallback: (callback: () => void) => callback(),
+      addEventListener: vi.fn(),
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 2 });
+
+    expect(lazyReportBatch({ sequence: 1 })).toBe(false);
+    expect(lazyReportBatch({ sequence: 2 })).toBe(false);
+    expect(flushReportQueue()).toBe(true);
+    expect(JSON.parse(String(sendBeacon.mock.calls[1]?.[1])).data).toEqual([
+      { sequence: 1 },
+      { sequence: 2 },
+    ]);
+  });
+
+  it("flushes an incomplete batch explicitly", () => {
+    const sendBeacon = vi.fn(() => true);
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+      addEventListener: vi.fn(),
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 5 });
+
+    lazyReportBatch({ sequence: 1 });
+    expect(flushReportQueue()).toBe(true);
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(flushReportQueue()).toBe(false);
   });
 });

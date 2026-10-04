@@ -26,6 +26,7 @@ export * from "./error/index.js";
 export * from "./performance/index.js";
 export {
     beaconRequest,
+    flushReportQueue,
     imgRequest,
     isSupportSendBeacon,
     lazyReportBatch,
