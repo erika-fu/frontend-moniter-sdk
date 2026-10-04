@@ -32,11 +32,12 @@ describe("package distribution metadata", () => {
 
     it("publishes only the built distribution", () => {
         expect(packageManifest.files).toEqual(["dist"]);
-        expect(packageManifest.dependencies).toBeUndefined();
+        expect(packageManifest.dependencies).toMatchObject({
+            "web-vitals": expect.any(String),
+        });
         expect(packageManifest.devDependencies).toMatchObject({
             vue: expect.any(String),
             "vue-router": expect.any(String),
-            "web-vitals": expect.any(String),
         });
     });
 });

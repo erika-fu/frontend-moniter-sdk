@@ -12,5 +12,8 @@ export default defineConfig({
         },
         minify: false,
         sourcemap: true,
+        rollupOptions: {
+            external: ["web-vitals"],
+        },
     },
 });

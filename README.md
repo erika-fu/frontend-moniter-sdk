@@ -70,10 +70,12 @@ collection.
 
 The production build uses Vite library mode for the browser-ready ESM bundle
 and TypeScript for declaration files. The package exposes the SDK through its
-root ESM entry and bundles its runtime code, so consumers do not need to
-install the development-only Vue demo dependencies. The demo imports the source
-`src/performance` module directly during development, so changes can be
-applied through Vite HMR without rebuilding `dist`.
+root ESM entry and declares `web-vitals` as an external runtime dependency.
+Installing the package therefore installs `web-vitals` in the business
+application, while Vue and Vue Router remain development-only demo
+dependencies. The demo imports the source `src/performance` module directly
+during development, so changes can be applied through Vite HMR without
+rebuilding `dist`.
 
 To open the demo, run `npm run demo`, then visit
 `http://localhost:4173/src/demo/index.html`. Do not open
