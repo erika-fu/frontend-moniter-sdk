@@ -26,22 +26,34 @@ npm run check
 
 ## Usage
 
-Initialize browser performance and runtime error monitoring with one callback:
+Initialize browser performance and runtime error monitoring with built-in
+batched reporting:
 
 ```ts
 import frontendMonitor from "frontend-moniter-sdk";
 
 frontendMonitor.init({
+  url: "/monitor",
+  projectName: "storefront",
+  appId: "web",
+  userId: "user-1",
+  batchSize: 5,
   onReport(report) {
-    navigator.sendBeacon("/monitor", JSON.stringify(report));
+    console.log("monitor report", report);
   },
 });
 ```
 
-Install Vue error capture through the application plugin API:
+The SDK batches reports, prefers `navigator.sendBeacon`, and falls back to an
+unmonitored `XMLHttpRequest`. Set `isImageUpload: true` to send the encoded
+payload in the `data` query parameter of an image request. Without `url`, no
+network request is made and `onReport` continues to receive every report.
+
+Install Vue error capture through the application plugin API. The plugin
+accepts the same reporting options:
 
 ```ts
-app.use(frontendMonitor, { onReport });
+app.use(frontendMonitor, { url: "/monitor", onReport });
 ```
 
 Forward errors from a React Error Boundary:

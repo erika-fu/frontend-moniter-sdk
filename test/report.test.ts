@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearReportQueue,
+  createReportHandler,
+  getReportConfig,
+  lazyReportBatch,
+  report,
+  resetReportConfig,
+  setConfig,
+} from "../src/report.js";
+
+describe("reporting", () => {
+  beforeEach(() => {
+    resetReportConfig();
+    clearReportQueue();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("merges defined configuration values, including false and zero", () => {
+    setConfig({
+      url: "/monitor",
+      projectName: "storefront",
+      appId: "web",
+      userId: "user-1",
+      isImageUpload: true,
+      batchSize: 8,
+    });
+    setConfig({
+      isImageUpload: false,
+      batchSize: 0,
+      projectName: undefined,
+    });
+
+    expect(getReportConfig()).toEqual({
+      url: "/monitor",
+      projectName: "storefront",
+      appId: "web",
+      userId: "user-1",
+      isImageUpload: false,
+      batchSize: 0,
+    });
+  });
+
+  it("wraps report data and prefers sendBeacon", () => {
+    const sendBeacon = vi.fn<(url: string, data: string) => boolean>(
+      () => true,
+    );
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+      requestIdleCallback: (callback: () => void) => callback(),
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({
+      url: "/monitor",
+      projectName: "storefront",
+      appId: "web",
+      userId: "user-1",
+    });
+
+    expect(report({ type: "error" })).toBe(true);
+
+    const [url, body] = sendBeacon.mock.calls[0] ?? [];
+    expect(url).toBe("/monitor");
+    expect(JSON.parse(String(body))).toMatchObject({
+      id: expect.stringMatching(/^id-/),
+      data: { type: "error" },
+    });
+  });
+
+  it("uses an encoded image request when image upload is enabled", () => {
+    const images: Array<{ src: string }> = [];
+    vi.stubGlobal("window", { navigator: {} });
+    vi.stubGlobal(
+      "Image",
+      class {
+        private value = "";
+
+        set src(src: string) {
+          this.value = src;
+          images.push(this);
+        }
+
+        get src(): string {
+          return this.value;
+        }
+      },
+    );
+    setConfig({ url: "/monitor", isImageUpload: true });
+
+    expect(report({ type: "performance" })).toBe(true);
+    expect(images).toHaveLength(1);
+
+    const requestUrl = new URL(images[0]!.src, "https://example.com");
+    expect(JSON.parse(requestUrl.searchParams.get("data") ?? "")).toMatchObject({
+      id: expect.stringMatching(/^id-/),
+      data: { type: "performance" },
+    });
+  });
+
+  it("reports and clears a batch as soon as batchSize is reached", () => {
+    const sendBeacon = vi.fn<(url: string, data: string) => boolean>(
+      () => true,
+    );
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+      requestIdleCallback: (callback: () => void) => callback(),
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 2 });
+
+    lazyReportBatch({ sequence: 1 });
+    expect(sendBeacon).not.toHaveBeenCalled();
+
+    lazyReportBatch({ sequence: 2 });
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(String(sendBeacon.mock.calls[0]?.[1])).data,
+    ).toEqual([{ sequence: 1 }, { sequence: 2 }]);
+
+    lazyReportBatch({ sequence: 3 });
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+  });
+
+  it("still calls the consumer callback when built-in serialization fails", () => {
+    const onReport = vi.fn();
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    vi.stubGlobal("window", { navigator: { sendBeacon: vi.fn() } });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 1 });
+
+    const handler = createReportHandler(onReport);
+    expect(() => handler?.(circular)).not.toThrow();
+    expect(onReport).toHaveBeenCalledWith(circular);
+  });
+});

@@ -9,10 +9,12 @@ import {
 import type { PerformanceMonitoringOptions } from "../src/performance/index.js";
 
 const {
+  configureReportHandler,
   observeError,
   observePerformance,
   setFrameworkErrorReportHandler,
 } = vi.hoisted(() => ({
+  configureReportHandler: vi.fn((options) => options.onReport),
   observeError: vi.fn(),
   observePerformance: vi.fn(),
   setFrameworkErrorReportHandler: vi.fn(),
@@ -29,6 +31,9 @@ vi.mock("../src/error/framework.js", () => ({
 vi.mock("../src/performance/index.js", () => ({
   observePerformance,
 }));
+vi.mock("../src/report.js", () => ({
+  configureReportHandler,
+}));
 
 import sdk, { init, type SDKOptions } from "../src/index.js";
 
@@ -40,6 +45,7 @@ type SDKPerformanceOptions = Exclude<
 describe("SDK initialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    configureReportHandler.mockImplementation((options) => options.onReport);
   });
 
   it("starts performance and runtime error monitoring by default", () => {
@@ -47,9 +53,32 @@ describe("SDK initialization", () => {
 
     init({ onReport });
 
+    expect(configureReportHandler).toHaveBeenCalledWith({ onReport });
     expect(setFrameworkErrorReportHandler).toHaveBeenCalledWith(onReport);
     expect(observePerformance).toHaveBeenCalledWith({ onReport });
     expect(observeError).toHaveBeenCalledWith(onReport);
+  });
+
+  it("configures built-in reporting and gives every monitor its handler", () => {
+    const reportHandler = vi.fn();
+    configureReportHandler.mockReturnValue(reportHandler);
+
+    init({
+      url: "/monitor",
+      appId: "web",
+      batchSize: 10,
+    });
+
+    expect(configureReportHandler).toHaveBeenCalledWith({
+      url: "/monitor",
+      appId: "web",
+      batchSize: 10,
+    });
+    expect(setFrameworkErrorReportHandler).toHaveBeenCalledWith(reportHandler);
+    expect(observePerformance).toHaveBeenCalledWith({
+      onReport: reportHandler,
+    });
+    expect(observeError).toHaveBeenCalledWith(reportHandler);
   });
 
   it("reuses the performance module configuration type", () => {

@@ -1,3 +1,8 @@
+import {
+    createReportHandler,
+    setConfig,
+    type ReportConfigOptions,
+} from "../report.js";
 import { getPageUrl, reportSafely } from "./utils.js";
 
 export interface VueErrorReportData {
@@ -26,7 +31,7 @@ export type FrameworkErrorReportHandler = (
     reportData: FrameworkErrorReportData,
 ) => void;
 
-export interface FrameworkErrorMonitoringOptions {
+export interface FrameworkErrorMonitoringOptions extends ReportConfigOptions {
     onReport?: FrameworkErrorReportHandler;
 }
 
@@ -91,18 +96,25 @@ export function install(
     host: VueErrorHandlerHost,
     options: FrameworkErrorMonitoringOptions = {},
 ): void {
+    setConfig(options);
+    const configuredReportHandler = options.onReport
+        ? createReportHandler(options.onReport)
+        : undefined;
+    if (!options.onReport && !frameworkReportHandler) {
+        frameworkReportHandler = createReportHandler();
+    }
     const config = host.config;
     const existingState = vueInstallStates.get(config);
 
     if (existingState) {
-        existingState.onReport = options.onReport;
+        existingState.onReport = configuredReportHandler;
         return;
     }
 
     const previousHandler = config.errorHandler;
     const state: VueInstallState = {
         installedHandler: () => undefined,
-        onReport: options.onReport,
+        onReport: configuredReportHandler,
     };
 
     state.installedHandler = function (error, instance, info) {
@@ -130,7 +142,10 @@ export function errorBoundary(
     info: unknown,
     onReport?: FrameworkErrorReportHandler,
 ): void {
-    reportSafely(onReport ?? frameworkReportHandler, {
+    const reportHandler = onReport
+        ? createReportHandler(onReport)
+        : frameworkReportHandler;
+    reportSafely(reportHandler, {
         type: "error",
         subType: "react",
         error: getErrorText(error),

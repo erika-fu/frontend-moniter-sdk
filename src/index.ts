@@ -15,16 +15,32 @@ import {
     type PerformanceMonitoringOptions,
     type PerformanceReportData,
 } from "./performance/index.js";
+import {
+    configureReportHandler,
+    type ReportConfigOptions,
+} from "./report.js";
 
 export const SDK_NAME = "frontend-moniter-sdk";
 
 export * from "./error/index.js";
 export * from "./performance/index.js";
+export {
+    beaconRequest,
+    imgRequest,
+    isSupportSendBeacon,
+    lazyReportBatch,
+    report,
+    setConfig,
+    xhrRequest,
+    type ReportConfig,
+    type ReportConfigOptions,
+    type ReportEnvelope,
+} from "./report.js";
 
 export type SDKReportData = ErrorReportData | PerformanceReportData;
 export type SDKReportHandler = (reportData: SDKReportData) => void;
 
-export interface SDKOptions {
+export interface SDKOptions extends ReportConfigOptions {
     /** 接收 SDK 产生的全部监控数据。 */
     onReport?: SDKReportHandler;
     /** 本次初始化是否启动错误监听；默认启动。 */
@@ -37,7 +53,7 @@ export interface SDKOptions {
  * 初始化 SDK，并按配置启动浏览器错误和性能监听。
  */
 export function init(options: SDKOptions = {}): void {
-    const onReport = options.onReport;
+    const onReport = configureReportHandler(options);
 
     setFrameworkErrorReportHandler(onReport);
 

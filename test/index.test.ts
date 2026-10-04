@@ -7,7 +7,9 @@ import {
   observeFetch,
   observePerformance,
   observeXHR,
+  report,
   SDK_NAME,
+  setConfig,
 } from "../src/index.js";
 
 describe("SDK entry point", () => {
@@ -26,5 +28,7 @@ describe("SDK entry point", () => {
     expect(observeError).toBeTypeOf("function");
     expect(install).toBeTypeOf("function");
     expect(errorBoundary).toBeTypeOf("function");
+    expect(report).toBeTypeOf("function");
+    expect(setConfig).toBeTypeOf("function");
   });
 });

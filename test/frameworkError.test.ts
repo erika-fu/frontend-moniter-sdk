@@ -6,10 +6,15 @@ import {
   type ErrorReportData,
 } from "../src/error/index.js";
 import { setFrameworkErrorReportHandler } from "../src/error/framework.js";
+import {
+  getReportConfig,
+  resetReportConfig,
+} from "../src/report.js";
 
 describe("framework error monitoring", () => {
   afterEach(() => {
     setFrameworkErrorReportHandler();
+    resetReportConfig();
     vi.unstubAllGlobals();
   });
 
@@ -99,6 +104,36 @@ describe("framework error monitoring", () => {
       info,
       pageUrl: "https://example.com/react",
       startTime: 34,
+    });
+  });
+
+  it("preserves the SDK-level callback when Vue is installed without options", () => {
+    const sdkReport = vi.fn<(data: ErrorReportData) => void>();
+    const app = {
+      config: {
+        errorHandler: null as
+          | ((
+              error: unknown,
+              instance: unknown,
+              info: string,
+            ) => unknown)
+          | null,
+      },
+    };
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/vue" },
+      performance: { now: () => 55 },
+    });
+    setFrameworkErrorReportHandler(sdkReport);
+
+    install(app, { url: "/vue-monitor", batchSize: 2 });
+    app.config.errorHandler?.(new Error("render failed"), null, "render");
+
+    expect(sdkReport).toHaveBeenCalledOnce();
+    expect(getReportConfig()).toMatchObject({
+      url: "/vue-monitor",
+      batchSize: 2,
     });
   });
 
