@@ -1,6 +1,8 @@
-import { rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import { rollup } from "rollup";
 import dts from "rollup-plugin-dts";
 import ts from "typescript";
@@ -71,13 +73,60 @@ async function bundleDeclarations() {
   }
 }
 
+async function verifyBuild() {
+  const expectedFiles = [
+    "index.cjs",
+    "index.d.ts",
+    "index.iife.js",
+    "index.js",
+  ];
+  const files = readdirSync(distribution).sort();
+
+  if (JSON.stringify(files) !== JSON.stringify(expectedFiles)) {
+    throw new Error(`Unexpected dist files: ${files.join(", ")}`);
+  }
+
+  const esmPath = resolve(distribution, "index.js");
+  const cjsPath = resolve(distribution, "index.cjs");
+  const iifePath = resolve(distribution, "index.iife.js");
+  const esmSource = readFileSync(esmPath, "utf8");
+  const cjsSource = readFileSync(cjsPath, "utf8");
+  const iifeSource = readFileSync(iifePath, "utf8");
+
+  if (!esmSource.includes('from "web-vitals"')) {
+    throw new Error("ESM build must keep web-vitals external");
+  }
+  if (!cjsSource.includes('require("web-vitals")')) {
+    throw new Error("CommonJS build must keep web-vitals external");
+  }
+  if (iifeSource.includes("webVitals") || iifeSource.includes("web-vitals")) {
+    throw new Error("IIFE build must include web-vitals");
+  }
+
+  const esm = await import(pathToFileURL(esmPath).href);
+  const require = createRequire(import.meta.url);
+  const cjs = require(cjsPath);
+  const iifeContext = {};
+  runInNewContext(iifeSource, iifeContext);
+
+  if (
+    typeof esm.init !== "function" ||
+    typeof cjs.init !== "function" ||
+    typeof iifeContext.FrontendMonitor?.init !== "function"
+  ) {
+    throw new Error("A distribution format does not expose the public API");
+  }
+}
+
 let buildSucceeded = false;
 removeBuildArtifacts();
 
 try {
   await viteBuild({ root });
+  await viteBuild({ root, mode: "iife" });
   emitDeclarations();
   await bundleDeclarations();
+  await verifyBuild();
   buildSucceeded = true;
 } finally {
   rmSync(temporaryTypes, { recursive: true, force: true });

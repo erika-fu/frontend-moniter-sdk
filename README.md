@@ -20,14 +20,25 @@ npm run build
 
 ## Commands
 
-- `npm run build` creates the minified SDK and bundled declarations in `dist/`
+- `npm run build` creates minified ESM, CommonJS, IIFE, and bundled declarations
+  in `dist/`
 - `npm run server` starts the report receiver on port `9800`
 - `npm test` runs the test suite once
 - `npm run test:watch` runs Vitest in watch mode
 - `npm run typecheck` checks TypeScript without emitting files
 - `npm run check` runs type checking, tests, and the production build
 - `npm pack --dry-run` previews the files that will be published
-- `npm publish` runs `prepublishOnly`, then publishes the ESM package
+- `npm publish` runs `prepublishOnly`, then publishes the production package
+
+The production build emits:
+
+- `dist/index.js` for ESM consumers
+- `dist/index.cjs` for CommonJS consumers
+- `dist/index.iife.js` for direct browser use as `FrontendMonitor`
+- `dist/index.d.ts` for TypeScript declarations
+
+ESM and CommonJS keep `web-vitals` external so package managers can deduplicate
+it. The IIFE build includes `web-vitals` and can run as a standalone script.
 
 ## Usage
 
