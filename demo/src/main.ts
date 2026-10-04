@@ -1,5 +1,5 @@
 import { createApp } from "vue";
-import { observePerformance } from "frontend-moniter-sdk";
+import { observePerformance } from "../../src/index.js";
 import { reports } from "./reportStore.js";
 import { router } from "./router/index.js";
 import App from "./App.vue";

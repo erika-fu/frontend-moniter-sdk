@@ -79,11 +79,12 @@ integration is covered by tests.
 
 The `demo/` directory is an independent Vue application with its own package
 manifest, lock file, TypeScript configuration, Vite configuration, and build
-output. It consumes the SDK through the package entry instead of importing
-files from `src/`. Build the SDK before starting or building the demo:
+output. It imports the SDK directly from `src/index.ts`, so SDK source changes
+are reflected without building the package first. Install both the SDK and demo
+dependencies before starting the demo:
 
 ```bash
-npm run build
+npm install
 npm install --prefix demo
 npm --prefix demo run dev
 ```

@@ -3,9 +3,8 @@
         <p class="section-kicker">ABOUT THE SDK</p>
         <h1>SDK 说明</h1>
         <p class="about-lead">
-            这个独立 Vue 项目通过 npm 包入口使用
-            <code>frontend-moniter-sdk</code>，拥有自己的 TypeScript、Vite
-            配置和构建产物。
+            这个独立 Vue 项目直接引用
+            <code>src</code> 中的 SDK 源码，以便及时验证开发中的改动。
         </p>
         <div class="about-grid">
             <article>
