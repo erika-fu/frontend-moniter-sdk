@@ -7,6 +7,13 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -17,14 +24,20 @@
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build",
-    "demo": "vite --host --port 4173"
+    "demo": "vite --host --port 4173",
+    "prepublishOnly": "npm run check"
   },
+  "sideEffects": false,
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@vitejs/plugin-vue": "^6.0.9",
     "typescript": "^5.6.3",
     "vite": "^5.4.21",
     "vitest": "^2.1.8",
-    "vue-tsc": "^2.2.12"
+    "vue": "^3.5.43",
+    "vue-router": "^4.6.4",
+    "vue-tsc": "^2.2.12",
+    "web-vitals": "^6.2.2"
   },
   "engines": {
     "node": ">=18"
@@ -34,10 +47,5 @@
     "monitoring",
     "sdk",
     "typescript"
-  ],
-  "dependencies": {
-    "vue": "^3.5.43",
-    "vue-router": "^4.6.4",
-    "web-vitals": "^6.2.2"
-  }
+  ]
 }

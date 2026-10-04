@@ -23,6 +23,8 @@ npm run check
 - `npm run typecheck` checks TypeScript without emitting files
 - `npm run check` runs type checking, tests, and the production build
 - `npm run demo` starts the demo on port `4173`
+- `npm pack --dry-run` previews the files that will be published
+- `npm publish` runs `prepublishOnly`, then publishes the ESM package
 
 ## Usage
 
@@ -67,7 +69,9 @@ metrics. Call the monitor APIs directly when the application needs to start
 collection.
 
 The production build uses Vite library mode for the browser-ready ESM bundle
-and TypeScript for declaration files. The demo imports the source
+and TypeScript for declaration files. The package exposes the SDK through its
+root ESM entry and bundles its runtime code, so consumers do not need to
+install the development-only Vue demo dependencies. The demo imports the source
 `src/performance` module directly during development, so changes can be
 applied through Vite HMR without rebuilding `dist`.
 

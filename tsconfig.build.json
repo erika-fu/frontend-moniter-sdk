@@ -6,7 +6,7 @@
     "emitDeclarationOnly": true,
     "outDir": "dist"
   },
-  "exclude": [
-    "test"
+  "include": [
+    "src/index.ts"
   ]
 }
