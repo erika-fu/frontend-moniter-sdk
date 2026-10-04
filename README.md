@@ -21,6 +21,7 @@ npm run build
 ## Commands
 
 - `npm run build` bundles the SDK and its runtime dependencies into `dist/`
+- `npm run server` starts the report receiver on port `9800`
 - `npm test` runs the test suite once
 - `npm run test:watch` runs Vitest in watch mode
 - `npm run typecheck` checks TypeScript without emitting files
@@ -90,6 +91,23 @@ npm --prefix demo run dev
 ```
 
 Then visit `http://localhost:4173/`.
+
+## Report server
+
+Start the local report receiver:
+
+```bash
+npm run server
+```
+
+Configure the SDK to send reports to
+`http://localhost:9800/reportData`. The server accepts JSON sent by Beacon or
+XHR and the `data` query parameter used by image reporting. Received report
+envelopes are printed to the terminal. Set `PORT` to override the default port:
+
+```bash
+PORT=3000 npm run server
+```
 
 The Vue demo uses hash routing:
 
