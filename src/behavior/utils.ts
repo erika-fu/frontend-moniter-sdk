@@ -1,5 +1,3 @@
-import { lazyReportBatch } from "../report.js";
-
 /**
  * 生成行为数据标识。
  *
@@ -15,20 +13,4 @@ export function generateBehaviorId(): string {
     }
 
     return `behavior-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-/**
- * 隔离上报回调异常，避免监控代码影响宿主页面的交互和路由。
- */
-export function reportSafely<T>(
-    onReport: ((reportData: T) => void) | undefined,
-    reportData: T,
-): void {
-    // 所有行为数据都先进入统一批量缓存，再通知调用方。
-    lazyReportBatch(reportData);
-    try {
-        onReport?.(reportData);
-    } catch {
-        // 上报失败不能中断宿主页面原有的事件处理流程。
-    }
 }

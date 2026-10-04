@@ -1,4 +1,4 @@
-import { lazyReportBatch } from "../report.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * XHR 请求性能上报数据。
@@ -117,14 +117,7 @@ export function observeXHR(onReport?: XHRReportHandler): void {
             this.removeEventListener("loadend", onLoadEnd, true);
             requestMetadata.delete(this);
 
-            // XHR 数据和其他性能指标使用同一个批量缓存入口。
-            lazyReportBatch(reportData);
-            // 监控逻辑不能因上报回调异常而影响业务请求。
-            try {
-                reportHandler?.(reportData);
-            } catch {
-                // 上报回调异常不能影响业务请求。
-            }
+            dispatchReport(reportData, reportHandler);
         };
 
         this.addEventListener("loadend", onLoadEnd, true);

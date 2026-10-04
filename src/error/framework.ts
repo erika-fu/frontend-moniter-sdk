@@ -1,8 +1,5 @@
-import {
-    setConfig,
-    type ReportConfigOptions,
-} from "../report.js";
-import { getPageUrl, reportSafely } from "./utils.js";
+import { dispatchReport } from "../report.js";
+import { getPageUrl } from "./utils.js";
 
 export interface VueErrorReportData {
     type: "error";
@@ -30,7 +27,7 @@ export type FrameworkErrorReportHandler = (
     reportData: FrameworkErrorReportData,
 ) => void;
 
-export interface FrameworkErrorMonitoringOptions extends ReportConfigOptions {
+export interface FrameworkErrorMonitoringOptions {
     onReport?: FrameworkErrorReportHandler;
 }
 
@@ -101,7 +98,6 @@ export function install(
     host: VueErrorHandlerHost,
     options: FrameworkErrorMonitoringOptions = {},
 ): void {
-    setConfig(options);
     const configuredReportHandler = options.onReport;
     const config = host.config;
     const existingState = vueInstallStates.get(config);
@@ -119,14 +115,17 @@ export function install(
 
     // 包装框架错误处理器，在上报后继续调用应用原有处理器。
     state.installedHandler = function (error, instance, info) {
-        reportSafely(state.onReport ?? frameworkReportHandler, {
-            type: "error",
-            subType: "vue",
-            error: getErrorText(error),
-            info,
-            pageUrl: getPageUrl(),
-            startTime: getStartTime(),
-        });
+        dispatchReport(
+            {
+                type: "error",
+                subType: "vue",
+                error: getErrorText(error),
+                info,
+                pageUrl: getPageUrl(),
+                startTime: getStartTime(),
+            },
+            state.onReport ?? frameworkReportHandler,
+        );
 
         return previousHandler?.call(this, error, instance, info);
     };
@@ -145,12 +144,15 @@ export function errorBoundary(
     onReport?: FrameworkErrorReportHandler,
 ): void {
     const reportHandler = onReport ?? frameworkReportHandler;
-    reportSafely(reportHandler, {
-        type: "error",
-        subType: "react",
-        error: getErrorText(error),
-        info,
-        pageUrl: getPageUrl(),
-        startTime: getStartTime(),
-    });
+    dispatchReport(
+        {
+            type: "error",
+            subType: "react",
+            error: getErrorText(error),
+            info,
+            pageUrl: getPageUrl(),
+            startTime: getStartTime(),
+        },
+        reportHandler,
+    );
 }

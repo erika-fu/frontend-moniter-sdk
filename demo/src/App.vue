@@ -7,7 +7,7 @@ import { RouterLink, RouterView } from "vue-router";
         <header class="topbar">
             <RouterLink class="brand" to="/">
                 <span class="eyebrow">FRONTEND MONITOR SDK</span>
-                <strong>性能监控实验台</strong>
+                <strong>前端监控实验台</strong>
             </RouterLink>
             <div class="live-status" aria-label="监听状态">
                 <span class="status-dot"></span>

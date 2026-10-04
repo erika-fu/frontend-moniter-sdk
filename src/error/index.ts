@@ -1,5 +1,6 @@
 import type { FrameworkErrorReportData } from "./framework.js";
-import { getPageUrl, reportSafely } from "./utils.js";
+import { dispatchReport } from "../report.js";
+import { getPageUrl } from "./utils.js";
 
 export { errorBoundary, install } from "./framework.js";
 export type {
@@ -148,24 +149,30 @@ export function observeError(onReport?: ErrorReportHandler): void {
             typeof event.composedPath === "function"
                 ? event.composedPath()
                 : legacyEvent.path;
-        reportSafely(reportHandler, {
-            type: "error",
-            subType: "resource",
-            url,
-            html: element.outerHTML ?? "",
-            pageUrl: getPageUrl(),
-            ...(paths ? { paths } : {}),
-        });
+        dispatchReport(
+            {
+                type: "error",
+                subType: "resource",
+                url,
+                html: element.outerHTML ?? "",
+                pageUrl: getPageUrl(),
+                ...(paths ? { paths } : {}),
+            },
+            reportHandler,
+        );
     };
 
     rejectionHandler = (event: PromiseRejectionEvent) => {
-        reportSafely(reportHandler, {
-            type: "error",
-            subType: "promise",
-            reason: getErrorReason(event.reason),
-            pageUrl: getPageUrl(),
-            startTime: event.timeStamp,
-        });
+        dispatchReport(
+            {
+                type: "error",
+                subType: "promise",
+                reason: getErrorReason(event.reason),
+                pageUrl: getPageUrl(),
+                startTime: event.timeStamp,
+            },
+            reportHandler,
+        );
     };
 
     currentWindow.addEventListener("error", resourceErrorHandler, true);
@@ -181,17 +188,22 @@ export function observeError(onReport?: ErrorReportHandler): void {
         colno,
         error,
     ) => {
-        reportSafely(reportHandler, {
-            type: "error",
-            subType: "js",
-            msg: String(message),
-            url: String(source),
-            lineNo: lineno,
-            columnNo: colno,
-            ...(getErrorStack(error) ? { stack: getErrorStack(error) } : {}),
-            pageUrl: getPageUrl(),
-            startTime: performance.now(),
-        });
+        dispatchReport(
+            {
+                type: "error",
+                subType: "js",
+                msg: String(message),
+                url: String(source),
+                lineNo: lineno,
+                columnNo: colno,
+                ...(getErrorStack(error)
+                    ? { stack: getErrorStack(error) }
+                    : {}),
+                pageUrl: getPageUrl(),
+                startTime: performance.now(),
+            },
+            reportHandler,
+        );
 
         return previousOnError?.call(
             currentWindow,

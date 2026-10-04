@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearReportQueue,
-  createReportHandler,
+  dispatchReport,
   flushReportQueue,
   getReportConfig,
   lazyReportBatch,
   report,
   resetReportConfig,
   setConfig,
+  subscribeReports,
 } from "../src/report.js";
 
 describe("reporting", () => {
@@ -127,44 +128,22 @@ describe("reporting", () => {
     expect(sendBeacon).toHaveBeenCalledTimes(1);
   });
 
-  it("still calls the consumer callback when built-in serialization fails", () => {
-    const onReport = vi.fn();
-    const circular: { self?: unknown } = {};
-    circular.self = circular;
-    vi.stubGlobal("window", { navigator: { sendBeacon: vi.fn() } });
-    vi.stubGlobal("navigator", window.navigator);
-    setConfig({ url: "/monitor", batchSize: 1 });
+  it("dispatches collected data to local subscribers and callbacks", () => {
+    const subscriber = vi.fn();
+    const callback = vi.fn();
+    const unsubscribe = subscribeReports(subscriber);
 
-    const handler = createReportHandler(onReport);
-    expect(() => handler?.(circular)).not.toThrow();
-    expect(onReport).toHaveBeenCalledWith(circular);
-  });
+    dispatchReport({ type: "behavior", subType: "click" }, callback);
+    unsubscribe();
 
-  it("queues handler data until the configured batch size is reached", () => {
-    const sendBeacon = vi.fn<(url: string, data: string) => boolean>(
-      () => true,
-    );
-    const onReport = vi.fn();
-    vi.stubGlobal("window", {
-      navigator: { sendBeacon },
+    expect(subscriber).toHaveBeenCalledWith({
+      type: "behavior",
+      subType: "click",
     });
-    vi.stubGlobal("navigator", window.navigator);
-    setConfig({ url: "/monitor", batchSize: 10 });
-
-    const handler = createReportHandler(onReport);
-    handler?.({ type: "performance", subType: "load" });
-
-    expect(sendBeacon).not.toHaveBeenCalled();
-    expect(onReport).toHaveBeenCalledWith({
-      type: "performance",
-      subType: "load",
+    expect(callback).toHaveBeenCalledWith({
+      type: "behavior",
+      subType: "click",
     });
-
-    expect(flushReportQueue()).toBe(true);
-    expect(sendBeacon).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(sendBeacon.mock.calls[0]?.[1])).data).toEqual([
-      { type: "performance", subType: "load" },
-    ]);
   });
 
   it("keeps a batch when sendBeacon rejects it", () => {

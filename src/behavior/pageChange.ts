@@ -1,4 +1,5 @@
-import { generateBehaviorId, reportSafely } from "./utils.js";
+import { dispatchReport } from "../report.js";
+import { generateBehaviorId } from "./utils.js";
 
 export type PageChangeSubType = "hashchange" | "popstate";
 
@@ -35,14 +36,17 @@ function reportPageChange(
     from: string,
     to: string,
 ): void {
-    reportSafely(reportHandler, {
-        type: "behavior",
-        subType,
-        from,
-        to,
-        startTime: performance.now(),
-        uuid: generateBehaviorId(),
-    });
+    dispatchReport(
+        {
+            type: "behavior",
+            subType,
+            from,
+            to,
+            startTime: performance.now(),
+            uuid: generateBehaviorId(),
+        },
+        reportHandler,
+    );
 }
 
 /**

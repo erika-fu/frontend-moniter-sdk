@@ -1,5 +1,5 @@
 import { onLCP, type LCPMetric } from "web-vitals";
-import { reportSafely } from "./reportSafely.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * LCP 上报数据。
@@ -40,6 +40,6 @@ export function observeLCP(
             pageUrl: window.location.href,
         };
 
-        reportSafely(onReport, reportData);
+        dispatchReport(reportData, onReport);
     });
 }

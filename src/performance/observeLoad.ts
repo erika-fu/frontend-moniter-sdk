@@ -1,4 +1,4 @@
-import { reportSafely } from "./reportSafely.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * 页面 onload 上报数据。
@@ -46,7 +46,7 @@ function reportLoad(
             pageUrl: window.location.href,
         };
 
-        reportSafely(onReport, reportData);
+        dispatchReport(reportData, onReport);
     });
 }
 

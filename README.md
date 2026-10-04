@@ -55,6 +55,10 @@ frontendMonitor.init({
   userId: "user-1",
   batchSize: 5,
 });
+
+frontendMonitor.performance();
+frontendMonitor.behavior();
+frontendMonitor.error();
 ```
 
 The SDK batches reports, prefers `navigator.sendBeacon`, and falls back to an
@@ -62,11 +66,15 @@ unmonitored `XMLHttpRequest`. Set `isImageUpload: true` to send the encoded
 payload in the `data` query parameter of an image request. Without `url`, no
 network request is made and `onReport` continues to receive every report.
 
-Install Vue error capture through the application plugin API. The plugin
-accepts the same reporting options:
+Use `frontendMonitor.subscribe(handler)` when the application also needs to
+observe collected data locally. Subscriptions do not configure or replace
+network reporting.
+
+Install Vue error capture through the application plugin API. It reuses the
+configuration provided to `init`:
 
 ```ts
-app.use(frontendMonitor, { url: "/monitor", onReport });
+app.use(frontendMonitor);
 ```
 
 Forward errors from a React Error Boundary:

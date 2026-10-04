@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { clearReports, reportTypes, reports } from "../reportStore";
+import {
+    clearReports,
+    getReportLocation,
+    reportTypes,
+    reports,
+} from "../reportStore";
 
 const activeFilter = ref("all");
 const visibleReports = computed(() =>
@@ -10,6 +15,38 @@ const visibleReports = computed(() =>
               (report) => report.subType === activeFilter.value,
           ),
 );
+
+function requestWithFetch(): void {
+    void fetch(`/sdk-demo-fetch-${Date.now()}.json`).catch(() => undefined);
+}
+
+function requestWithXHR(): void {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", `/sdk-demo-xhr-${Date.now()}.json`);
+    xhr.send();
+}
+
+function throwJavaScriptError(): void {
+    window.setTimeout(() => {
+        throw new Error("demo: JavaScript runtime error");
+    });
+}
+
+function rejectPromise(): void {
+    void Promise.reject(new Error("demo: unhandled Promise rejection"));
+}
+
+function failResource(): void {
+    const image = new Image();
+    image.hidden = true;
+    image.addEventListener("error", () => image.remove(), { once: true });
+    document.body.append(image);
+    image.src = `/sdk-demo-resource-${Date.now()}.png`;
+}
+
+function throwVueError(): void {
+    throw new Error("demo: Vue component error");
+}
 </script>
 
 <template>
@@ -23,13 +60,32 @@ const visibleReports = computed(() =>
             <article class="summary-item">
                 <span class="summary-label">报告类型</span>
                 <strong>{{ reportTypes.length }}</strong>
-                <span class="summary-hint">来自 Performance SDK</span>
+                <span class="summary-hint">行为、性能与错误数据</span>
             </article>
             <article class="summary-item summary-action">
-                <span class="summary-label">测试请求</span>
-                <strong>Fetch / XHR</strong>
-                <span class="summary-hint">打开接口请求后会实时出现</span>
+                <span class="summary-label">上报方式</span>
+                <strong>自动批量上报</strong>
+                <span class="summary-hint">使用 init 中的统一配置</span>
             </article>
+        </section>
+
+        <section class="test-panel" aria-labelledby="test-panel-title">
+            <div>
+                <p class="section-kicker">TEST EVENTS</p>
+                <h2 id="test-panel-title">触发监控事件</h2>
+            </div>
+            <div class="test-actions">
+                <button type="button" @click="requestWithFetch">Fetch</button>
+                <button type="button" @click="requestWithXHR">XHR</button>
+                <button type="button" @click="throwJavaScriptError">
+                    JS 异常
+                </button>
+                <button type="button" @click="rejectPromise">
+                    Promise 异常
+                </button>
+                <button type="button" @click="failResource">资源异常</button>
+                <button type="button" @click="throwVueError">Vue 异常</button>
+            </div>
         </section>
 
         <section class="workspace">
@@ -71,8 +127,8 @@ const visibleReports = computed(() =>
 
             <div v-if="visibleReports.length === 0" class="empty-state">
                 <div class="empty-mark">0</div>
-                <h2>还没有性能报告</h2>
-                <p>页面加载指标会在浏览器确认后自动出现。</p>
+                <h2>还没有监控报告</h2>
+                <p>触发上方事件后，采集结果会显示在这里。</p>
             </div>
             <div v-else class="report-list">
                 <article
@@ -82,7 +138,9 @@ const visibleReports = computed(() =>
                 >
                     <div class="report-meta">
                         <span class="report-type">{{ report.subType }}</span>
-                        <span class="report-page">{{ report.pageUrl }}</span>
+                        <span class="report-page">
+                            {{ getReportLocation(report) }}
+                        </span>
                     </div>
                     <pre>{{ JSON.stringify(report, null, 2) }}</pre>
                 </article>

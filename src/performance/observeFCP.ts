@@ -1,5 +1,5 @@
 import { onFCP, type FCPMetric } from "web-vitals";
-import { reportSafely } from "./reportSafely.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * FCP 上报数据。
@@ -40,6 +40,6 @@ export function observeFCP(
             pageUrl: window.location.href,
         };
 
-        reportSafely(onReport, reportData);
+        dispatchReport(reportData, onReport);
     });
 }

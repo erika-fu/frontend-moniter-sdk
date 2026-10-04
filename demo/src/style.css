@@ -166,6 +166,43 @@ h2 {
     background: #fff;
 }
 
+.test-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+    padding: 22px 28px;
+    border: 1px solid #dce4ee;
+    background: #fff;
+}
+
+.test-panel h2 {
+    font-size: 18px;
+}
+
+.test-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.test-actions button {
+    min-height: 36px;
+    padding: 7px 12px;
+    cursor: pointer;
+    border: 1px solid #ccd7e4;
+    border-radius: 6px;
+    background: #fff;
+    color: #3f536b;
+}
+
+.test-actions button:hover {
+    border-color: #3b6ea8;
+    color: #285987;
+}
+
 .page-workspace {
     margin-top: 34px;
 }
@@ -345,9 +382,20 @@ pre {
     }
 
     .topbar,
-    .workspace-heading {
+    .workspace-heading,
+    .test-panel {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .test-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .test-actions button {
+        width: 100%;
     }
 
     .brand strong {

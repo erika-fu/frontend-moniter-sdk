@@ -17,7 +17,11 @@ import {
     observePerformance,
     type PerformanceReportData,
 } from "./performance/index.js";
-import { setConfig, type ReportConfigOptions } from "./report.js";
+import {
+    setConfig,
+    subscribeReports,
+    type ReportConfigOptions,
+} from "./report.js";
 
 export const SDK_NAME = "frontend-moniter-sdk";
 
@@ -53,8 +57,16 @@ export function init(options: SDKOptions = {}): void {
     setConfig(options);
 }
 
+/**
+ * 订阅 SDK 采集到的数据，不参与或替代网络上报。
+ */
+export function subscribe(onReport: SDKReportHandler): () => void {
+    return subscribeReports(onReport);
+}
+
 const sdk = {
     init,
+    subscribe,
     install,
     errorBoundary,
     behavior: observeBehavior,

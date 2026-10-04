@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { lazyReportBatch } = vi.hoisted(() => ({
-  lazyReportBatch: vi.fn(() => false),
+const { dispatchReport, lazyReportBatch } = vi.hoisted(() => ({
+  dispatchReport: vi.fn(
+    (data: unknown, onReport?: (data: unknown) => void) => {
+      lazyReportBatch(data);
+      onReport?.(data);
+    },
+  ),
+  lazyReportBatch: vi.fn((_data: unknown) => false),
 }));
 
 vi.mock("../src/report.js", () => ({
-  lazyReportBatch,
-  createReportHandler: vi.fn(),
+  dispatchReport,
   setConfig: vi.fn(),
 }));
 

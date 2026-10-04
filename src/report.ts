@@ -14,16 +14,16 @@ export {
 
 export interface ReportEnvelope<T = unknown> {
     id: string;
+    projectName: string;
+    appId: string;
+    userId: string;
     data: T;
 }
 
 type ReportCallback<T> = (data: T) => void;
 
-interface ReportingOptions<T> extends ReportConfigOptions {
-    onReport?: ReportCallback<T> | undefined;
-}
-
 let lifecycleWindow: Window | undefined;
+const reportListeners = new Set<(data: unknown) => void>();
 
 // SDK 安装前保存原始 XHR 方法，避免监控 XHR 包装器再次捕获上报请求。
 const originalOpen =
@@ -48,6 +48,9 @@ function generateUniqueId(): string {
 function createEnvelope<T>(data: T): ReportEnvelope<T> {
     return {
         id: generateUniqueId(),
+        projectName: config.projectName,
+        appId: config.appId,
+        userId: config.userId,
         data,
     };
 }
@@ -60,6 +63,45 @@ function invokeSafely(callback: () => void): void {
         callback();
     } catch {
         // 上报传输失败不能影响页面业务。
+    }
+}
+
+/**
+ * 订阅 SDK 采集到的数据。该订阅仅用于业务侧观察，不影响网络上报。
+ */
+export function subscribeReports<T>(
+    listener: ReportCallback<T>,
+): () => void {
+    const reportListener = (data: unknown) => {
+        listener(data as T);
+    };
+    reportListeners.add(reportListener);
+
+    return () => {
+        reportListeners.delete(reportListener);
+    };
+}
+
+/**
+ * 通知本地订阅者，并隔离订阅者异常。
+ */
+export function notifyReportListeners(data: unknown): void {
+    for (const listener of reportListeners) {
+        invokeSafely(() => listener(data));
+    }
+}
+
+/**
+ * 将采集数据统一送入网络上报、本地订阅和单次采集回调。
+ */
+export function dispatchReport<T>(
+    data: T,
+    onReport?: ReportCallback<T>,
+): void {
+    invokeSafely(() => lazyReportBatch(data));
+    notifyReportListeners(data);
+    if (onReport) {
+        invokeSafely(() => onReport(data));
     }
 }
 
@@ -240,38 +282,4 @@ export function flushReportQueue(): boolean {
  */
 export function clearReportQueue(): void {
     clearCache();
-}
-
-/**
- * 将内置网络上报和调用方回调组合成采集模块使用的单一处理器。
- */
-export function createReportHandler<T>(
-    onReport?: ReportCallback<T>,
-): ReportCallback<T> | undefined {
-    if (!config.url && !onReport) {
-        return undefined;
-    }
-
-    return (data: T) => {
-        if (config.url) {
-            try {
-                // 统一处理器将数据加入缓存，达到阈值后再批量发送。
-                lazyReportBatch(data);
-            } catch {
-                // 内置上报失败时仍需执行调用方的回调。
-            }
-        }
-        onReport?.(data);
-    };
-}
-
-/**
- * 合并上报配置并创建供各监控模块复用的处理器。
- */
-export function configureReportHandler<T>(
-    options: ReportingOptions<T>,
-): ReportCallback<T> | undefined {
-    setConfig(options);
-    // 监控模块会直接加入批量缓存；这里只返回调用方回调，避免重复入队。
-    return options.onReport;
 }

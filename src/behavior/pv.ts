@@ -1,4 +1,5 @@
-import { generateBehaviorId, reportSafely } from "./utils.js";
+import { dispatchReport } from "../report.js";
+import { generateBehaviorId } from "./utils.js";
 
 /**
  * 页面访问（PV）上报数据。
@@ -34,14 +35,17 @@ export function observePV(onReport?: PageViewReportHandler): void {
         return;
     }
 
-    reportSafely(onReport, {
-        type: "behavior",
-        subType: "pv",
-        startTime: performance.now(),
-        pageUrl: window.location.href,
-        referrer: document.referrer,
-        uuid: generateBehaviorId(),
-    });
+    dispatchReport(
+        {
+            type: "behavior",
+            subType: "pv",
+            startTime: performance.now(),
+            pageUrl: window.location.href,
+            referrer: document.referrer,
+            uuid: generateBehaviorId(),
+        },
+        onReport,
+    );
 }
 
 export default observePV;

@@ -1,4 +1,4 @@
-import { reportSafely } from "./utils.js";
+import { dispatchReport } from "../report.js";
 
 export type ClickEventType = "mousedown" | "touchstart";
 
@@ -63,18 +63,21 @@ function handleInteraction(eventType: ClickEventType, event: Event): void {
             : legacyEvent.path;
     const target = event.target;
 
-    reportSafely(reportHandler, {
-        type: "behavior",
-        subType: "click",
-        target: target.tagName,
-        startTime: event.timeStamp,
-        innerHtml: target.innerHTML ?? "",
-        outerHtml: target.outerHTML ?? "",
-        width: target.offsetWidth ?? 0,
-        height: target.offsetHeight ?? 0,
-        eventType,
-        ...(path ? { path } : {}),
-    });
+    dispatchReport(
+        {
+            type: "behavior",
+            subType: "click",
+            target: target.tagName,
+            startTime: event.timeStamp,
+            innerHtml: target.innerHTML ?? "",
+            outerHtml: target.outerHTML ?? "",
+            width: target.offsetWidth ?? 0,
+            height: target.offsetHeight ?? 0,
+            eventType,
+            ...(path ? { path } : {}),
+        },
+        reportHandler,
+    );
 }
 
 /**

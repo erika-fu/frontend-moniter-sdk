@@ -1,4 +1,4 @@
-import { reportSafely } from "./reportSafely.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * FP 上报数据。
@@ -55,7 +55,7 @@ export function observePaint(
                 pageUrl: window.location.href,
             };
 
-            reportSafely(onReport, reportData);
+            dispatchReport(reportData, onReport);
             break;
         }
     });

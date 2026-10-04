@@ -12,6 +12,7 @@ import {
   report,
   SDK_NAME,
   setConfig,
+  subscribe,
 } from "../src/index.js";
 
 describe("SDK entry point", () => {
@@ -37,5 +38,6 @@ describe("SDK entry point", () => {
     expect(errorBoundary).toBeTypeOf("function");
     expect(report).toBeTypeOf("function");
     expect(setConfig).toBeTypeOf("function");
+    expect(subscribe).toBeTypeOf("function");
   });
 });

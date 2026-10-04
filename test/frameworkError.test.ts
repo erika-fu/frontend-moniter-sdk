@@ -10,6 +10,7 @@ import { setFrameworkErrorReportHandler } from "../src/error/framework.js";
 import {
   getReportConfig,
   resetReportConfig,
+  setConfig,
 } from "../src/report.js";
 
 describe("framework error monitoring", () => {
@@ -169,7 +170,7 @@ describe("framework error monitoring", () => {
     });
   });
 
-  it("preserves the SDK-level callback when Vue is installed without options", () => {
+  it("uses the initialized report configuration when Vue is installed", () => {
     const sdkReport = vi.fn<(data: ErrorReportData) => void>();
     const app = {
       config: {
@@ -188,14 +189,19 @@ describe("framework error monitoring", () => {
       performance: { now: () => 55 },
     });
     setFrameworkErrorReportHandler(sdkReport);
+    const initializedConfig = {
+      url: "/vue-monitor",
+      projectName: "sdk-demo",
+      batchSize: 2,
+    };
+    setConfig(initializedConfig);
 
-    install(app, { url: "/vue-monitor", batchSize: 2 });
+    install(app);
     app.config.errorHandler?.(new Error("render failed"), null, "render");
 
     expect(sdkReport).toHaveBeenCalledOnce();
     expect(getReportConfig()).toMatchObject({
-      url: "/vue-monitor",
-      batchSize: 2,
+      ...initializedConfig,
     });
   });
 

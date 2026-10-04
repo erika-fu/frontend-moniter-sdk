@@ -58,6 +58,7 @@ describe("SDK initialization", () => {
 
   it("provides the main APIs on the default export", () => {
     expect(sdk.init).toBe(init);
+    expect(sdk.subscribe).toBeTypeOf("function");
     expect(sdk.behavior).toBe(observeBehavior);
     expect(sdk.performance).toBe(observePerformance);
     expect(sdk.error).toBe(observeError);

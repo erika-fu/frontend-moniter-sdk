@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { clearReports, reportTypes, reports } from "../reportStore";
+import {
+    clearReports,
+    getReportLocation,
+    reportTypes,
+    reports,
+} from "../reportStore";
 
 const activeFilter = ref("all");
 const visibleReports = computed(() =>
@@ -52,7 +57,7 @@ const visibleReports = computed(() =>
 
         <div v-if="visibleReports.length === 0" class="empty-state">
             <div class="empty-mark">0</div>
-            <h2>还没有性能报告</h2>
+            <h2>还没有监控报告</h2>
             <p>返回概览或触发请求后，报告会显示在这里。</p>
         </div>
         <div v-else class="report-list">
@@ -63,7 +68,9 @@ const visibleReports = computed(() =>
             >
                 <div class="report-meta">
                     <span class="report-type">{{ report.subType }}</span>
-                    <span class="report-page">{{ report.pageUrl }}</span>
+                    <span class="report-page">
+                        {{ getReportLocation(report) }}
+                    </span>
                 </div>
                 <pre>{{ JSON.stringify(report, null, 2) }}</pre>
             </article>

@@ -1,4 +1,4 @@
-import { reportSafely } from "./reportSafely.js";
+import { dispatchReport } from "../report.js";
 
 /**
  * 资源加载上报数据。
@@ -79,7 +79,7 @@ function observeLoadedResources(
                 pageUrl: window.location.href,
             };
 
-            reportSafely(onReport, reportData);
+            dispatchReport(reportData, onReport);
         }
 
         // 页面首轮资源条目处理完成后停止观察，避免采集上报请求本身。

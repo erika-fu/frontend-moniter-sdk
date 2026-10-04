@@ -17,6 +17,16 @@
                 <strong>Resource / Fetch / XHR</strong>
                 <p>记录资源网络阶段以及接口请求耗时和状态。</p>
             </article>
+            <article>
+                <span class="summary-label">行为数据</span>
+                <strong>PV / Click / Route</strong>
+                <p>记录页面访问、用户操作和前端路由变化。</p>
+            </article>
+            <article>
+                <span class="summary-label">错误数据</span>
+                <strong>JS / Promise / Resource / Vue</strong>
+                <p>捕获运行时、资源加载和 Vue 组件异常。</p>
+            </article>
         </div>
     </main>
 </template>
