@@ -1,3 +1,5 @@
+import { lazyReportBatch } from "../report.js";
+
 /**
  * 生成行为数据标识。
  *
@@ -22,12 +24,11 @@ export function reportSafely<T>(
     onReport: ((reportData: T) => void) | undefined,
     reportData: T,
 ): void {
-    // 所有行为数据都先走 SDK 统一传输函数，再通知调用方。
-    report(reportData);
+    // 所有行为数据都先进入统一批量缓存，再通知调用方。
+    lazyReportBatch(reportData);
     try {
         onReport?.(reportData);
     } catch {
         // 上报失败不能中断宿主页面原有的事件处理流程。
     }
 }
-import { report } from "../report.js";

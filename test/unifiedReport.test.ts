@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { report } = vi.hoisted(() => ({
-  report: vi.fn(() => true),
+const { lazyReportBatch } = vi.hoisted(() => ({
+  lazyReportBatch: vi.fn(() => false),
 }));
 
 vi.mock("../src/report.js", () => ({
-  report,
+  lazyReportBatch,
   createReportHandler: vi.fn(),
   setConfig: vi.fn(),
 }));
@@ -21,10 +21,10 @@ describe("unified metric reporting", () => {
   afterEach(() => {
     stopObserveError();
     vi.unstubAllGlobals();
-    report.mockClear();
+    lazyReportBatch.mockClear();
   });
 
-  it("sends behavior, runtime error, and performance data through report", () => {
+  it("queues behavior, runtime error, and performance data in batches", () => {
     const addEventListener = vi.fn();
     const onReport = vi.fn();
 
@@ -52,16 +52,16 @@ describe("unified metric reporting", () => {
     window.onerror?.("boom", "app.js", 1, 2, new Error("boom"));
     observeLoad(onReport);
 
-    expect(report).toHaveBeenCalledTimes(3);
-    expect(report).toHaveBeenNthCalledWith(
+    expect(lazyReportBatch).toHaveBeenCalledTimes(3);
+    expect(lazyReportBatch).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ type: "behavior", subType: "pv" }),
     );
-    expect(report).toHaveBeenNthCalledWith(
+    expect(lazyReportBatch).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ type: "error", subType: "js" }),
     );
-    expect(report).toHaveBeenNthCalledWith(
+    expect(lazyReportBatch).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ type: "performance", subType: "load" }),
     );

@@ -140,7 +140,7 @@ describe("reporting", () => {
     expect(onReport).toHaveBeenCalledWith(circular);
   });
 
-  it("uses the unified report transport for handler data", () => {
+  it("queues handler data until the configured batch size is reached", () => {
     const sendBeacon = vi.fn<(url: string, data: string) => boolean>(
       () => true,
     );
@@ -154,11 +154,17 @@ describe("reporting", () => {
     const handler = createReportHandler(onReport);
     handler?.({ type: "performance", subType: "load" });
 
-    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(sendBeacon).not.toHaveBeenCalled();
     expect(onReport).toHaveBeenCalledWith({
       type: "performance",
       subType: "load",
     });
+
+    expect(flushReportQueue()).toBe(true);
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(sendBeacon.mock.calls[0]?.[1])).data).toEqual([
+      { type: "performance", subType: "load" },
+    ]);
   });
 
   it("keeps a batch when sendBeacon rejects it", () => {

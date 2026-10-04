@@ -1,11 +1,11 @@
-import { report } from "../report.js";
+import { lazyReportBatch } from "../report.js";
 
 export function reportSafely<T>(
     onReport: ((reportData: T) => void) | undefined,
     reportData: T,
 ): void {
-    // 所有运行时错误都通过统一 report 函数传输。
-    report(reportData);
+    // 所有运行时错误都进入统一批量缓存。
+    lazyReportBatch(reportData);
     try {
         onReport?.(reportData);
     } catch {

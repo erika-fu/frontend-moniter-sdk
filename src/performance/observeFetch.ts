@@ -1,3 +1,5 @@
+import { lazyReportBatch } from "../report.js";
+
 /**
  * Fetch 请求性能上报数据。
  */
@@ -51,13 +53,13 @@ function getRequestDetails(
 }
 
 function reportFetch(reportData: FetchReportData): void {
-    // Fetch 数据和其他性能指标使用同一个传输入口。
-    report(reportData);
+    // Fetch 数据和其他性能指标使用同一个批量缓存入口。
+    lazyReportBatch(reportData);
     // 监控逻辑不能因上报回调异常而改变 Fetch Promise 的状态。
     try {
         reportHandler?.(reportData);
     } catch {
-        // 等统一上报模块接入后，由上报模块处理自身异常。
+        // 上报回调异常不能改变 Fetch Promise 的状态。
     }
 }
 
@@ -164,4 +166,3 @@ export function stopObserveFetch(): void {
     wrappedFetch = undefined;
     reportHandler = undefined;
 }
-import { report } from "../report.js";
