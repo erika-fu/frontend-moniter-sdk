@@ -20,7 +20,7 @@ npm run build
 
 ## Commands
 
-- `npm run build` bundles the SDK and its runtime dependencies into `dist/`
+- `npm run build` creates the minified SDK and bundled declarations in `dist/`
 - `npm run server` starts the report receiver on port `9800`
 - `npm test` runs the test suite once
 - `npm run test:watch` runs Vitest in watch mode
