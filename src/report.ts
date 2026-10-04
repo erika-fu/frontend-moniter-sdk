@@ -24,6 +24,8 @@ interface ReportingOptions<T> extends ReportConfigOptions {
 }
 
 let lifecycleWindow: Window | undefined;
+
+// SDK 安装前保存原始 XHR 方法，避免监控 XHR 包装器再次捕获上报请求。
 const originalOpen =
     typeof XMLHttpRequest === "undefined"
         ? undefined
@@ -171,6 +173,7 @@ export function report<T>(data: T): boolean {
 }
 
 function flushQueue(): boolean {
+    // 先读取快照，只有传输被接受后才清理缓存，避免失败时丢数据。
     const batch = getCache();
     if (batch.length === 0) {
         return false;
@@ -192,10 +195,12 @@ function installLifecycleFlush(): void {
         return;
     }
 
+    // 每个 Window 只注册一次，避免重复初始化 SDK 时重复发送同一批数据。
     lifecycleWindow = window;
     window.addEventListener("pagehide", flushQueue);
     const documentTarget = window.document;
     if (documentTarget) {
+        // 页面隐藏或卸载前，优先把未达到批量阈值的数据发送出去。
         documentTarget.addEventListener("visibilitychange", () => {
             if (documentTarget.visibilityState === "hidden") {
                 flushQueue();
@@ -214,6 +219,7 @@ export function lazyReportBatch(data: unknown): boolean {
 
     installLifecycleFlush();
     addCache(data);
+    // batchSize 为 0 时按单条上报处理，避免数据永远留在缓存中。
     const batchSize = Math.max(1, config.batchSize);
     if (getCache().length < batchSize) {
         return false;
