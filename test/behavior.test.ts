@@ -151,7 +151,7 @@ describe("behavior monitoring", () => {
       width: 120,
       height: 36,
       eventType: "mousedown",
-      path,
+      path: ["BUTTON", "BODY"],
     });
 
     const touchHandler = addEventListener.mock.calls.find(
@@ -173,7 +173,7 @@ describe("behavior monitoring", () => {
       width: 120,
       height: 36,
       eventType: "touchstart",
-      path,
+      path: ["BUTTON", "BODY"],
     });
 
     stopObserveClick();

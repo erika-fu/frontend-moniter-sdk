@@ -1,4 +1,5 @@
 import type { FrameworkErrorReportData } from "./framework.js";
+import { getSerializableEventPath } from "../eventPath.js";
 import { dispatchReport } from "../report.js";
 import { getPageUrl } from "./utils.js";
 
@@ -28,7 +29,7 @@ export interface ResourceErrorReportData extends RuntimeErrorReportBase {
     url: string;
     html: string;
     /** 事件传播路径；运行环境不支持时为 undefined。 */
-    paths?: EventTarget[];
+    paths?: string[];
 }
 
 /**
@@ -144,11 +145,7 @@ export function observeError(onReport?: ErrorReportHandler): void {
         const element = target as EventTarget & {
             outerHTML?: string;
         };
-        const legacyEvent = event as Event & { path?: EventTarget[] };
-        const paths =
-            typeof event.composedPath === "function"
-                ? event.composedPath()
-                : legacyEvent.path;
+        const paths = getSerializableEventPath(event);
         dispatchReport(
             {
                 type: "error",

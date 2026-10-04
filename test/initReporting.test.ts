@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   init,
+  observeClick,
   observePV,
   stopObserveBehavior,
 } from "../src/index.js";
@@ -127,5 +128,91 @@ describe("reporting after SDK initialization", () => {
         info: "component event handler",
       }),
     );
+  });
+
+  it("reports errors after a click path contains circular DOM references", () => {
+    const images: Array<{ src: string }> = [];
+    const eventHandlers = new Map<string, (event: Event) => void>();
+    const target = {
+      tagName: "BUTTON",
+      innerHTML: "Vue error",
+      outerHTML: "<button>Vue error</button>",
+      offsetWidth: 100,
+      offsetHeight: 36,
+    };
+    const windowTarget: { self?: unknown } = {};
+    windowTarget.self = windowTarget;
+    const app = {
+      config: {
+        errorHandler: null as
+          | ((
+              error: unknown,
+              instance: unknown,
+              info: string,
+            ) => unknown)
+          | null,
+      },
+    };
+
+    vi.stubGlobal("window", {
+      location: { href: "https://demo.example.com/" },
+      addEventListener: vi.fn(
+        (type: string, handler: (event: Event) => void) => {
+          eventHandlers.set(type, handler);
+        },
+      ),
+      removeEventListener: vi.fn(),
+      performance: { now: () => 42 },
+    });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal(
+      "Image",
+      class {
+        private value = "";
+
+        set src(src: string) {
+          this.value = src;
+          images.push(this);
+        }
+
+        get src(): string {
+          return this.value;
+        }
+      },
+    );
+
+    frontendMonitor.init({
+      url: "/reportData",
+      isImageUpload: true,
+      batchSize: 1,
+    });
+    observeClick();
+    eventHandlers.get("mousedown")?.({
+      target,
+      timeStamp: 24,
+      composedPath: () => [target, windowTarget],
+    } as unknown as MouseEvent);
+    frontendMonitor.install(app);
+    app.config.errorHandler?.(
+      new Error("demo: Vue component error"),
+      null,
+      "native event handler",
+    );
+
+    expect(images).toHaveLength(2);
+    const reports = images.map((image) => {
+      const requestUrl = new URL(image.src, "https://demo.example.com");
+      return JSON.parse(requestUrl.searchParams.get("data") ?? "").data[0];
+    });
+    expect(reports).toEqual([
+      expect.objectContaining({
+        type: "behavior",
+        subType: "click",
+      }),
+      expect.objectContaining({
+        type: "error",
+        subType: "vue",
+      }),
+    ]);
   });
 });

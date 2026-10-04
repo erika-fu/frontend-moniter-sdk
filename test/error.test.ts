@@ -16,6 +16,7 @@ describe("observeError", () => {
     const removeEventListener = vi.fn();
     const onReport = vi.fn<(data: ErrorReportData) => void>();
     const target = {
+      tagName: "SCRIPT",
       src: "https://example.com/app.js",
       href: "",
       outerHTML: '<script src="https://example.com/app.js"></script>',
@@ -46,7 +47,7 @@ describe("observeError", () => {
       url: "https://example.com/app.js",
       html: '<script src="https://example.com/app.js"></script>',
       pageUrl: "https://example.com/",
-      paths,
+      paths: ["SCRIPT", "BODY"],
     });
   });
 

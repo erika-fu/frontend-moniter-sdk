@@ -1,4 +1,5 @@
 import { dispatchReport } from "../report.js";
+import { getSerializableEventPath } from "../eventPath.js";
 
 export type ClickEventType = "mousedown" | "touchstart";
 
@@ -25,7 +26,7 @@ export interface ClickReportData {
     /** 触发采集的原始事件类型。 */
     eventType: ClickEventType;
     /** 事件传播路径；运行环境不支持时不提供。 */
-    path?: EventTarget[];
+    path?: string[];
 }
 
 export type ClickReportHandler = (reportData: ClickReportData) => void;
@@ -56,11 +57,7 @@ function handleInteraction(eventType: ClickEventType, event: Event): void {
         return;
     }
 
-    const legacyEvent = event as Event & { path?: EventTarget[] };
-    const path =
-        typeof event.composedPath === "function"
-            ? event.composedPath()
-            : legacyEvent.path;
+    const path = getSerializableEventPath(event);
     const target = event.target;
 
     dispatchReport(
