@@ -91,6 +91,12 @@ function resetReplayBuffer(): void {
     bootstrapEvents = [];
 }
 
+function clearReplayEvents(): void {
+    buffer = [];
+    bufferStart = 0;
+    bufferLength = 0;
+}
+
 function addToRingBuffer(value: BufferedReplayEvent): void {
     if (bufferSize <= 0) {
         return;
@@ -177,12 +183,10 @@ export function observeReplay(
             };
             if (event.type === FULL_SNAPSHOT_EVENT_TYPE) {
                 snapshot = bufferedEvent;
-                buffer = [];
-                bufferStart = 0;
-                bufferLength = 0;
+                clearReplayEvents();
                 return;
             }
-            if (!snapshot && (event.type === 0 || event.type === 1)) {
+            if (!snapshot) {
                 bootstrapEvents.push(bufferedEvent);
                 return;
             }
@@ -255,7 +259,7 @@ export function flushReplayOnError(
             reportHandler,
         );
     }
-    resetReplayBuffer();
+    clearReplayEvents();
     flushReportQueue();
 }
 

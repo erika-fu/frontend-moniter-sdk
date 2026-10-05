@@ -121,6 +121,34 @@ describe("observeReplay", () => {
         );
     });
 
+    it("keeps rrweb bootstrap events and the snapshot across error flushes", () => {
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+        vi.stubGlobal("performance", { now: () => 10 });
+
+        observeReplay({ onReport });
+        emit?.({ type: 4, timestamp: 20, data: {} } as eventWithTime);
+        emit?.({ type: 2, timestamp: 30, data: {} } as eventWithTime);
+        emit?.({ type: 3, timestamp: 40, data: {} } as unknown as eventWithTime);
+
+        flushReplayOnError();
+        expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual(
+            [20, 30, 40],
+        );
+
+        onReport.mockClear();
+        emit?.({ type: 3, timestamp: 50, data: {} } as unknown as eventWithTime);
+        flushReplayOnError();
+        expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual(
+            [20, 30, 50],
+        );
+    });
+
     it("updates the callback without starting another session", () => {
         const first = vi.fn();
         const second = vi.fn();
