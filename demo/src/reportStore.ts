@@ -7,25 +7,6 @@ export function addReport(report: SDKReportData): void {
     reports.value = [report, ...reports.value].slice(0, 100);
 }
 
-export function replaceReportsFromServer(payload: unknown): void {
-    if (!Array.isArray(payload)) {
-        return;
-    }
-
-    const serverReports = payload.flatMap((envelope) => {
-        if (!envelope || typeof envelope !== "object") {
-            return [];
-        }
-        const data = (envelope as { data?: unknown }).data;
-        return Array.isArray(data) ? data : [data];
-    });
-
-    reports.value = serverReports.filter(
-        (report): report is SDKReportData =>
-            Boolean(report && typeof report === "object" && "type" in report),
-    ) as SDKReportData[];
-}
-
 export const reportTypes = computed(() => {
     const counts = new Map<string, number>();
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import ErrorSourcePanel from "../components/ErrorSourcePanel.vue";
 import {
     clearReports,
     getReportLocation,
@@ -72,6 +73,7 @@ const visibleReports = computed(() =>
                         {{ getReportLocation(report) }}
                     </span>
                 </div>
+                <ErrorSourcePanel :report="report" />
                 <pre>{{ JSON.stringify(report, null, 2) }}</pre>
             </article>
         </div>

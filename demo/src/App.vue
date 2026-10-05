@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from "vue-router";
+import SourceMapUploader from "./components/SourceMapUploader.vue";
 </script>
 
 <template>
@@ -21,6 +22,7 @@ import { RouterLink, RouterView } from "vue-router";
             <RouterLink to="/about">SDK 说明</RouterLink>
         </nav>
 
+        <SourceMapUploader />
         <RouterView />
     </div>
 </template>

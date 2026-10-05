@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { SDKReportData } from "../../../src/index.js";
+import ErrorSourcePanel from "../components/ErrorSourcePanel.vue";
 import {
     clearReports,
     getReportLocation,
@@ -16,22 +17,6 @@ const visibleReports = computed(() =>
               (report) => report.subType === activeFilter.value,
           ),
 );
-
-interface SourceFrame {
-    fileName?: string;
-    lineNumber?: number;
-    columnNumber?: number;
-    originalFileName?: string;
-    originalLineNumber?: number;
-    originalColumnNumber?: number;
-}
-
-function getSourceStack(report: SDKReportData): SourceFrame[] {
-    const sourceStack = (report as SDKReportData & {
-        sourceStack?: unknown;
-    }).sourceStack;
-    return Array.isArray(sourceStack) ? (sourceStack as SourceFrame[]) : [];
-}
 
 function requestWithFetch(): void {
     void fetch(`/sdk-demo-fetch-${Date.now()}.json`).catch(() => undefined);
@@ -159,28 +144,7 @@ function throwVueError(): void {
                             {{ getReportLocation(report) }}
                         </span>
                     </div>
-                    <div
-                        v-if="'sourceStack' in report"
-                        class="source-location"
-                    >
-                        <strong>SourceMap 还原位置</strong>
-                        <span
-                            v-for="(frame, frameIndex) in getSourceStack(report)"
-                            :key="frameIndex"
-                        >
-                            {{
-                                frame.originalFileName ??
-                                frame.fileName ??
-                                "unknown"
-                            }}:{{
-                                frame.originalLineNumber ?? frame.lineNumber ?? "-"
-                            }}:{{
-                                frame.originalColumnNumber ??
-                                frame.columnNumber ??
-                                "-"
-                            }}
-                        </span>
-                    </div>
+                    <ErrorSourcePanel :report="report" />
                     <pre>{{ JSON.stringify(report, null, 2) }}</pre>
                 </article>
             </div>
