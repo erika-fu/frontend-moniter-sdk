@@ -1,6 +1,7 @@
 import { createApp } from "vue";
 import frontendMonitor from "frontend-moniter-sdk";
 import { addReport } from "./reportStore.js";
+import { startReplayRecording } from "./replayControl.js";
 import { router } from "./router/index.js";
 import App from "./App.vue";
 import "./style.css";
@@ -27,3 +28,6 @@ createApp(App)
     .use(router)
     .use(frontendMonitor)
     .mount("#app");
+
+// 先挂载应用再开始录制，确保 rrweb 的首个 DOM 快照包含 demo 页面。
+startReplayRecording();

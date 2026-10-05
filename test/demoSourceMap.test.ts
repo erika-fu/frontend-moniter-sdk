@@ -65,4 +65,35 @@ describe("demo SourceMap resolver", () => {
         });
         expect(unrelated).not.toHaveProperty("originalFileName");
     });
+
+    it("recognizes a dev-server source path already present in the map", () => {
+        const generator = new SourceMapGenerator({ file: "assets/app.js" });
+        generator.setSourceContent(
+            "src/views/DashboardView.vue",
+            "<script setup>throw new Error()</script>",
+        );
+        generator.addMapping({
+            generated: { line: 1, column: 0 },
+            original: { line: 1, column: 0 },
+            source: "src/views/DashboardView.vue",
+        });
+        const consumer = new SourceMapConsumer(
+            generator.toJSON() as unknown as ConstructorParameters<
+                typeof SourceMapConsumer
+            >[0],
+        );
+
+        const [frame] = resolveStackWithMap(
+            "Error\n" +
+                "    at throwJavaScriptError (http://localhost:4174/src/views/DashboardView.vue:32:15)",
+            consumer,
+        );
+
+        expect(frame).toMatchObject({
+            originalFileName: "src/views/DashboardView.vue",
+            originalLineNumber: 32,
+            originalColumnNumber: 15,
+            sourceContent: "<script setup>throw new Error()</script>",
+        });
+    });
 });

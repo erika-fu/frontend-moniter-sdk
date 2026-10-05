@@ -93,21 +93,48 @@ function getFileName(value: string): string {
         .pop() ?? value;
 }
 
+function normalizeSourcePath(value: string): string {
+    return value
+        .split(/[?#]/, 1)[0]!
+        .replaceAll("\\", "/")
+        .replace(/^(\.\.\/)+/, "")
+        .replace(/^\.\//, "")
+        .replace(/^\/+/, "");
+}
+
+function findOriginalSource(
+    frame: StackFrame,
+    consumer: SourceMapConsumer,
+): string | undefined {
+    const framePath = normalizeSourcePath(frame.fileName);
+    return consumer.sources.find((source) => {
+        const sourcePath = normalizeSourcePath(source);
+        return (
+            framePath === sourcePath ||
+            framePath.endsWith(`/${sourcePath}`) ||
+            sourcePath.endsWith(`/${framePath}`)
+        );
+    });
+}
+
 function mapMatchesFrame(
     frame: StackFrame,
     consumer: SourceMapConsumer,
 ): boolean {
-    if (!consumer.file) {
-        return true;
+    if (consumer.file) {
+        const frameFileName = getFileName(frame.fileName);
+        const mapFileName = getFileName(consumer.file);
+        if (
+            frameFileName === mapFileName ||
+            frameFileName.endsWith(mapFileName) ||
+            mapFileName.endsWith(frameFileName)
+        ) {
+            return true;
+        }
     }
 
-    const frameFileName = getFileName(frame.fileName);
-    const mapFileName = getFileName(consumer.file);
-    return (
-        frameFileName === mapFileName ||
-        frameFileName.endsWith(mapFileName) ||
-        mapFileName.endsWith(frameFileName)
-    );
+    // Dev server 堆栈可能已经指向 map 中的原始 source，而不是 generated file。
+    return findOriginalSource(frame, consumer) !== undefined;
 }
 
 export function resolveStackWithMap(
@@ -117,6 +144,18 @@ export function resolveStackWithMap(
     return parseStack(stack).map((frame) => {
         if (!consumer || !mapMatchesFrame(frame, consumer)) {
             return frame;
+        }
+
+        const originalSource = findOriginalSource(frame, consumer);
+        if (originalSource) {
+            const sourceContent = getSourceContent(consumer, originalSource);
+            return {
+                ...frame,
+                originalFileName: originalSource,
+                originalLineNumber: frame.lineNumber,
+                originalColumnNumber: frame.columnNumber,
+                ...(sourceContent !== undefined ? { sourceContent } : {}),
+            };
         }
 
         try {
