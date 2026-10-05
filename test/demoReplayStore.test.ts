@@ -6,6 +6,7 @@ import {
     getReplayRoute,
     replaySessions,
 } from "../demo/src/reportStore.js";
+import { getPlaybackOffset } from "../demo/src/replayTimeline.js";
 
 function replayReport(
     replayId: string,
@@ -60,5 +61,25 @@ describe("demo replay store", () => {
             path: "/replay",
             query: { replayId: "replay-1", replayOffset: "123" },
         });
+    });
+
+    it("converts an SDK replay offset to the player timeline", () => {
+        addReport(replayReport("replay-1", 100, 0));
+        addReport(replayReport("replay-1", 300, 200));
+
+        const session = replaySessions.value[0];
+        expect(session).toBeDefined();
+        expect(getPlaybackOffset(session!, 123)).toBe(123);
+        expect(getPlaybackOffset(session!, 0)).toBeUndefined();
+        expect(getPlaybackOffset(session!, Number.NaN)).toBeUndefined();
+    });
+
+    it("bounds replay data kept by the demo", () => {
+        for (let timestamp = 0; timestamp < 1001; timestamp += 1) {
+            addReport(replayReport("replay-1", timestamp, timestamp));
+        }
+
+        expect(replaySessions.value[0]?.events).toHaveLength(1000);
+        expect(replaySessions.value[0]?.firstTimestamp).toBe(1);
     });
 });

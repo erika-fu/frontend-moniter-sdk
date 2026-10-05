@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { SDKReportData } from "../../../src/index.js";
+import type { SDKReportData } from "frontend-moniter-sdk";
 import { resolveStack, type ResolvedStackFrame } from "../sourceMapStore";
 
 const props = defineProps<{ report: SDKReportData }>();

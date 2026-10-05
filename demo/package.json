@@ -10,7 +10,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
-    "rrweb": "^2.1.7",
+    "frontend-moniter-sdk": "file:..",
     "rrweb-player": "^2.1.7",
     "source-map-js": "^1.2.2",
     "vue": "^3.5.43",

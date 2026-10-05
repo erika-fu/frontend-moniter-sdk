@@ -2,15 +2,23 @@ import { computed, ref, shallowRef } from "vue";
 import type {
     ReplayEventReportData,
     SDKReportData,
-} from "../../src/index.js";
+} from "frontend-moniter-sdk";
+import {
+    createReplayTimeline,
+    type ReplayTimeline,
+} from "./replayTimeline.js";
 
 export const reports = shallowRef<SDKReportData[]>([]);
 const replayReports = shallowRef<ReplayEventReportData[]>([]);
+const MAX_REPLAY_REPORTS = 1000;
 
 export function addReport(report: SDKReportData): void {
     reports.value = [report, ...reports.value].slice(0, 100);
     if (isReplayReport(report)) {
-        replayReports.value = [report, ...replayReports.value];
+        replayReports.value = [
+            report,
+            ...replayReports.value,
+        ].slice(0, MAX_REPLAY_REPORTS);
     }
 }
 
@@ -47,46 +55,16 @@ export function isReplayReport(
     return report.type === "replay" && report.subType === "event";
 }
 
-export interface ReplaySessionView {
-    id: string;
-    events: ReplayEventReportData["event"][];
-    firstTimestamp: number;
-    lastTimestamp: number;
-    firstReplayOffset: number;
-}
-
-export const replaySessions = computed<ReplaySessionView[]>(() => {
-    const sessions = new Map<string, ReplaySessionView>();
+export const replaySessions = computed<ReplayTimeline[]>(() => {
+    const sessionReports = new Map<string, ReplayEventReportData[]>();
 
     for (const report of replayReports.value) {
-        const session = sessions.get(report.replayId) ?? {
-            id: report.replayId,
-            events: [],
-            firstTimestamp: report.startTime,
-            lastTimestamp: report.startTime,
-            firstReplayOffset: report.replayOffset,
-        };
-        session.events.push(report.event);
-        session.firstTimestamp = Math.min(
-            session.firstTimestamp,
-            report.startTime,
-        );
-        session.lastTimestamp = Math.max(
-            session.lastTimestamp,
-            report.startTime,
-        );
-        session.firstReplayOffset = Math.min(
-            session.firstReplayOffset,
-            report.replayOffset,
-        );
-        sessions.set(report.replayId, session);
+        const reports = sessionReports.get(report.replayId) ?? [];
+        reports.push(report);
+        sessionReports.set(report.replayId, reports);
     }
 
-    for (const session of sessions.values()) {
-        session.events.sort((a, b) => a.timestamp - b.timestamp);
-    }
-
-    return [...sessions.values()];
+    return [...sessionReports.values()].map(createReplayTimeline);
 });
 
 export function getReplayContext(

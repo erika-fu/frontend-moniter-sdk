@@ -1,5 +1,5 @@
 import { createApp } from "vue";
-import frontendMonitor from "../../src/index.js";
+import frontendMonitor from "frontend-moniter-sdk";
 import { addReport } from "./reportStore.js";
 import { router } from "./router/index.js";
 import App from "./App.vue";

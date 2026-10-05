@@ -3,7 +3,7 @@ import {
     getReplaySession,
     observeReplay,
     stopObserveReplay,
-} from "../../src/replay/index.js";
+} from "frontend-moniter-sdk";
 
 export const isReplayRecording = ref(false);
 

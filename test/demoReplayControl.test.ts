@@ -8,7 +8,7 @@ const { getReplaySession, observeReplay, stopObserveReplay } = vi.hoisted(
     }),
 );
 
-vi.mock("../src/replay/index.js", () => ({
+vi.mock("frontend-moniter-sdk", () => ({
     getReplaySession,
     observeReplay,
     stopObserveReplay,

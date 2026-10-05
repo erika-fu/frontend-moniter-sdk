@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ReplayPlayer from "../components/ReplayPlayer.vue";
 import { replaySessions } from "../reportStore";
+import { getPlaybackOffset } from "../replayTimeline";
 
 const route = useRoute();
 const router = useRouter();
@@ -15,17 +16,16 @@ const selectedId = ref(
 const selectedSession = computed(() =>
     replaySessions.value.find((session) => session.id === selectedId.value),
 );
-const initialOffset = computed(() => {
-    const value = Number(route.query.replayOffset);
-    if (
-        !selectedSession.value ||
-        !Number.isFinite(value) ||
-        value <= selectedSession.value.firstReplayOffset
-    ) {
-        return undefined;
-    }
-    return value - selectedSession.value.firstReplayOffset;
-});
+const initialOffset = computed(() =>
+    selectedSession.value
+        ? getPlaybackOffset(
+              selectedSession.value,
+              typeof route.query.replayOffset === "string"
+                  ? Number(route.query.replayOffset)
+                  : undefined,
+          )
+        : undefined,
+);
 
 function selectSession(id: string): void {
     selectedId.value = id;

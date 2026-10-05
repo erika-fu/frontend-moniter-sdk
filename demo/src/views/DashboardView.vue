@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { SDKReportData } from "../../../src/index.js";
+import type { SDKReportData } from "frontend-moniter-sdk";
 import ErrorSourcePanel from "../components/ErrorSourcePanel.vue";
 import { RouterLink } from "vue-router";
 import {

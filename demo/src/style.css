@@ -578,6 +578,14 @@ h2 {
     background: #172033;
 }
 
+.replay-player-error {
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: #f5b7b1;
+    text-align: center;
+}
+
 .replay-missing {
     display: grid;
     min-height: 240px;
