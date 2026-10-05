@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import {
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    ref,
+    watch,
+} from "vue";
 import rrwebPlayer from "rrweb-player";
 import "rrweb-player/dist/style.css";
 import type { ReplayEventReportData } from "frontend-moniter-sdk";
@@ -13,6 +19,13 @@ const target = ref<HTMLElement>();
 const playerError = ref("");
 let player: rrwebPlayer | undefined;
 let seekFrame: number | undefined;
+
+function scheduleSeek(): void {
+    if (seekFrame !== undefined) {
+        window.cancelAnimationFrame(seekFrame);
+    }
+    seekFrame = window.requestAnimationFrame(seekToInitialOffset);
+}
 
 function seekToInitialOffset(): void {
     if (
@@ -55,7 +68,7 @@ onMounted(() => {
 
             // rrweb-player 的 Replayer 在构造后还会异步建立 mirror，
             // 下一帧再次定位，避免初始 goto 被初始化流程覆盖。
-            seekFrame = window.requestAnimationFrame(seekToInitialOffset);
+            scheduleSeek();
         } catch {
             playerError.value = "当前录屏数据无法播放";
             player = undefined;
@@ -78,6 +91,15 @@ onBeforeUnmount(() => {
     }
     player = undefined;
 });
+
+watch(
+    () => props.initialOffset,
+    () => {
+        if (player) {
+            scheduleSeek();
+        }
+    },
+);
 </script>
 
 <template>
