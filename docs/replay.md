@@ -40,7 +40,7 @@ observeReplay({
 
 ## 错误定位
 
-录制期间产生的错误报告会附加 `sessionId`、`replayId` 和 `replayOffset`。`sessionId` 是当前错误片段与 rrweb 事件的共同会话标识，`replayId` 为兼容已有消费者保留的别名；`replayOffset` 是错误发生时距该片段录制开始的毫秒数。异常触发时，错误报告会立即上报，SDK 默认继续录制 2 秒，然后结束当前片段并创建新的 session，因此不同错误不会复用同一个 DOM snapshot。
+录制期间产生的错误报告会附加 `sessionId`、`replayId` 和 `replayOffset`。`sessionId` 在当前页面录制生命周期内保持稳定，用于关联同一次页面访问中的多个错误；`replayId` 标识一段可独立播放的回放片段，每次错误片段冲刷完成后都会变化。`replayOffset` 是错误发生时距当前 replay 片段录制开始的毫秒数。异常触发时，错误报告会立即上报，SDK 默认继续录制 2 秒，然后结束当前片段并创建新的 DOM snapshot。
 
 SDK 提供 `createReplayUrl()` 生成回放页地址，回放页面读取这两个查询参数即可定位：
 
@@ -52,4 +52,4 @@ const url = createReplayUrl("/replay", {
 });
 ```
 
-录屏事件的形状为 `ReplayEventReportData`，其中 `event` 是 rrweb 事件，`sessionId` 与错误报告一致，`startTime` 是 rrweb 事件时间戳，`replayOffset` 是统一的相对毫秒时间轴。
+录屏事件的形状为 `ReplayEventReportData`，其中 `event` 是 rrweb 事件，`sessionId` 与错误报告一致，`replayId` 标识当前回放片段，`startTime` 是 rrweb 事件时间戳，`replayOffset` 是当前片段的相对毫秒时间轴。

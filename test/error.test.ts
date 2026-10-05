@@ -139,7 +139,7 @@ describe("observeError", () => {
       expect.objectContaining({
         subType: "js",
         replayId: expect.stringMatching(/^replay-/),
-        sessionId: expect.stringMatching(/^replay-/),
+        sessionId: expect.stringMatching(/^session-/),
         replayOffset: 0,
       }),
     );

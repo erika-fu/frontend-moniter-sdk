@@ -59,7 +59,8 @@ describe("observeReplay", () => {
         expect(session).toEqual(
             expect.objectContaining({
                 id: expect.stringMatching(/^replay-/),
-                sessionId: expect.stringMatching(/^replay-/),
+                replayId: expect.stringMatching(/^replay-/),
+                sessionId: expect.stringMatching(/^session-/),
                 startTime: 25,
                 startedAt: expect.any(Number),
             }),
@@ -148,7 +149,8 @@ describe("observeReplay", () => {
         );
 
         const nextSession = getReplaySession()!;
-        expect(nextSession.sessionId).not.toBe(firstSession.sessionId);
+        expect(nextSession.replayId).not.toBe(firstSession.replayId);
+        expect(nextSession.sessionId).toBe(firstSession.sessionId);
         onReport.mockClear();
         emit?.({
             type: 4,

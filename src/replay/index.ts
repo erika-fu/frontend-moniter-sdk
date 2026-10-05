@@ -10,7 +10,10 @@ const DEFAULT_POST_ERROR_DURATION = 2000;
 const FULL_SNAPSHOT_EVENT_TYPE = 2;
 
 export interface ReplaySession {
+    /** 当前可独立播放片段的兼容 id，等同于 replayId。 */
     id: string;
+    replayId: string;
+    /** 页面本次录制生命周期的稳定会话 id。 */
     sessionId: string;
     startTime: number;
     startedAt: number;
@@ -57,6 +60,7 @@ interface BufferedReplayEvent {
 }
 
 let session: ReplaySession | undefined;
+let activeSessionId: string | undefined;
 let stopRecording: (() => void) | undefined;
 let reportHandler: ReplayReportHandler | undefined;
 let buffer: Array<BufferedReplayEvent | undefined> = [];
@@ -81,6 +85,10 @@ function getNow(): number {
 
 function createReplayId(): string {
     return `replay-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function createSessionId(): string {
+    return `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function normalizeBufferSize(value: number | undefined): number {
@@ -155,7 +163,7 @@ function createReplayReport(
     return {
         type: "replay",
         subType: "event",
-        replayId: currentSession.id,
+        replayId: currentSession.replayId,
         sessionId: currentSession.sessionId,
         event: bufferedEvent.event,
         startTime: bufferedEvent.event.timestamp,
@@ -168,13 +176,15 @@ function createReplayReport(
 }
 
 function startReplaySession(): void {
+    const replayId = createReplayId();
     const currentSession: ReplaySession = {
-        id: createReplayId(),
-        sessionId: "",
+        id: replayId,
+        replayId,
+        sessionId: activeSessionId ?? createSessionId(),
         startTime: getNow(),
         startedAt: Date.now(),
     };
-    currentSession.sessionId = currentSession.id;
+    activeSessionId = currentSession.sessionId;
     session = currentSession;
     resetReplayBuffer();
 
@@ -205,6 +215,7 @@ function startReplaySession(): void {
     } catch {
         clearPendingFlush();
         session = undefined;
+        activeSessionId = undefined;
         reportHandler = undefined;
         resetReplayBuffer();
     }
@@ -231,6 +242,7 @@ export function observeReplay(
 
     replayOptions = { ...options };
     reportHandler = options.onReport;
+    activeSessionId = createSessionId();
     bufferSize = normalizeBufferSize(options.bufferSize);
     postErrorDuration = normalizePostErrorDuration(
         options.postErrorDuration,
@@ -246,6 +258,7 @@ export function stopObserveReplay(): void {
     stopRecording?.();
     stopRecording = undefined;
     session = undefined;
+    activeSessionId = undefined;
     reportHandler = undefined;
     replayOptions = {};
     resetReplayBuffer();
@@ -267,7 +280,7 @@ export function getReplayErrorContext(): ReplayErrorContext | undefined {
     }
 
     return {
-        replayId: session.id,
+        replayId: session.replayId,
         sessionId: session.sessionId,
         replayOffset: Math.max(0, getNow() - session.startTime),
     };
