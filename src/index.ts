@@ -24,7 +24,9 @@ import {
 } from "./report.js";
 import {
     createReplayUrl,
+    getReplaySession,
     observeReplay,
+    stopObserveReplay,
     type ReplayReportData,
 } from "./replay/index.js";
 
@@ -81,6 +83,8 @@ const sdk = {
     error: observeError,
     replay: observeReplay,
     createReplayUrl,
+    getReplaySession,
+    stopObserveReplay,
     observeBehavior,
     observePerformance,
     observeError,
