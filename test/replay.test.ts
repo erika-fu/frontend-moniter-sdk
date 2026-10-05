@@ -21,6 +21,7 @@ describe("observeReplay", () => {
         stopObserveReplay();
         resetReportConfig();
         record.mockReset();
+        vi.useRealTimers();
         vi.unstubAllGlobals();
     });
 
@@ -42,7 +43,7 @@ describe("observeReplay", () => {
         vi.stubGlobal("window", {});
         vi.stubGlobal("performance", { now: () => 25 });
 
-        observeReplay({ onReport });
+        observeReplay({ onReport, postErrorDuration: 0 });
         const session = getReplaySession();
         emit?.({ type: 4, timestamp: 30, data: {} } as eventWithTime);
         emit?.({ type: 2, timestamp: 40, data: {} } as eventWithTime, true);
@@ -108,7 +109,11 @@ describe("observeReplay", () => {
         vi.stubGlobal("window", {});
         vi.stubGlobal("performance", { now: () => 10 });
 
-        observeReplay({ onReport, bufferSize: 2 });
+        observeReplay({
+            onReport,
+            bufferSize: 2,
+            postErrorDuration: 0,
+        });
         emit?.({ type: 2, timestamp: 100, data: {} } as eventWithTime);
         emit?.({ type: 3, timestamp: 101, data: { value: 1 } } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: 102, data: { value: 2 } } as unknown as eventWithTime);
@@ -131,7 +136,7 @@ describe("observeReplay", () => {
         vi.stubGlobal("window", {});
         vi.stubGlobal("performance", { now: () => 10 });
 
-        observeReplay({ onReport });
+        observeReplay({ onReport, postErrorDuration: 0 });
         emit?.({ type: 4, timestamp: 20, data: {} } as eventWithTime);
         emit?.({ type: 2, timestamp: 30, data: {} } as eventWithTime);
         emit?.({ type: 3, timestamp: 40, data: {} } as unknown as eventWithTime);
@@ -147,6 +152,50 @@ describe("observeReplay", () => {
         expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual(
             [20, 30, 50],
         );
+    });
+
+    it("includes events recorded during the post-error window", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+        vi.stubGlobal("performance", { now: () => 10 });
+
+        observeReplay({ onReport });
+        const session = getReplaySession()!;
+        emit?.({
+            type: 4,
+            timestamp: session.startedAt,
+            data: {},
+        } as eventWithTime);
+        emit?.({
+            type: 2,
+            timestamp: session.startedAt + 10,
+            data: {},
+        } as eventWithTime);
+
+        flushReplayOnError({
+            replayId: session.id,
+            sessionId: session.sessionId,
+            replayOffset: 100,
+        });
+        emit?.({
+            type: 3,
+            timestamp: session.startedAt + 1000,
+            data: {},
+        } as unknown as eventWithTime);
+
+        vi.advanceTimersByTime(1999);
+        expect(onReport).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(
+            onReport.mock.calls.map(([report]) => report.replayOffset),
+        ).toEqual([0, 10, 1000]);
     });
 
     it("updates the callback without starting another session", () => {

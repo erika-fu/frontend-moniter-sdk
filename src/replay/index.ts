@@ -6,6 +6,7 @@ import {
 import { dispatchReport, flushReportQueue } from "../report.js";
 
 const DEFAULT_BUFFER_SIZE = 100;
+const DEFAULT_POST_ERROR_DURATION = 2000;
 const FULL_SNAPSHOT_EVENT_TYPE = 2;
 
 export interface ReplaySession {
@@ -34,6 +35,8 @@ export interface ReplayMonitoringOptions {
     onReport?: ReplayReportHandler;
     /** 环形缓存最多保留的 rrweb 事件数，默认 100。 */
     bufferSize?: number;
+    /** 异常后继续录制的毫秒数，默认 2000；设为 0 时立即上报。 */
+    postErrorDuration?: number;
     /** 是否脱敏全部输入框，默认开启。 */
     maskAllInputs?: boolean;
     /** 需要屏蔽的元素 class，默认是 `monitor-block`。 */
@@ -62,6 +65,8 @@ let bufferStart = 0;
 let bufferLength = 0;
 let snapshot: BufferedReplayEvent | undefined;
 let bootstrapEvents: BufferedReplayEvent[] = [];
+let postErrorDuration = DEFAULT_POST_ERROR_DURATION;
+let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
 function getNow(): number {
     if (
@@ -81,6 +86,19 @@ function normalizeBufferSize(value: number | undefined): number {
     return Number.isFinite(value)
         ? Math.max(1, Math.floor(value as number))
         : DEFAULT_BUFFER_SIZE;
+}
+
+function normalizePostErrorDuration(value: number | undefined): number {
+    return Number.isFinite(value)
+        ? Math.max(0, Math.floor(value as number))
+        : DEFAULT_POST_ERROR_DURATION;
+}
+
+function clearPendingFlush(): void {
+    if (pendingFlushTimer !== undefined) {
+        clearTimeout(pendingFlushTimer);
+        pendingFlushTimer = undefined;
+    }
 }
 
 function resetReplayBuffer(): void {
@@ -160,6 +178,9 @@ export function observeReplay(
 
     if (session) {
         reportHandler = options.onReport;
+        postErrorDuration = normalizePostErrorDuration(
+            options.postErrorDuration,
+        );
         return;
     }
 
@@ -173,6 +194,9 @@ export function observeReplay(
     session = currentSession;
     reportHandler = options.onReport;
     bufferSize = normalizeBufferSize(options.bufferSize);
+    postErrorDuration = normalizePostErrorDuration(
+        options.postErrorDuration,
+    );
     resetReplayBuffer();
 
     const recordOptions: recordOptions<eventWithTime> = {
@@ -200,6 +224,7 @@ export function observeReplay(
     try {
         stopRecording = record(recordOptions);
     } catch {
+        clearPendingFlush();
         session = undefined;
         reportHandler = undefined;
         resetReplayBuffer();
@@ -210,6 +235,7 @@ export function observeReplay(
  * 停止录制并释放 rrweb 监听器。
  */
 export function stopObserveReplay(): void {
+    clearPendingFlush();
     stopRecording?.();
     stopRecording = undefined;
     session = undefined;
@@ -245,10 +271,8 @@ export function getReplayErrorContext(): ReplayErrorContext | undefined {
  * 错误报告应先取得上下文，再调用本函数，这样错误和回放事件会拥有
  * 同一个 sessionId 与 replayOffset。
  */
-export function flushReplayOnError(
-    errorContext: ReplayErrorContext | undefined = getReplayErrorContext(),
-): void {
-    if (!session || !errorContext) {
+function flushReplayBuffer(sessionId: string): void {
+    if (!session || session.sessionId !== sessionId) {
         return;
     }
 
@@ -261,6 +285,32 @@ export function flushReplayOnError(
     }
     clearReplayEvents();
     flushReportQueue();
+}
+
+/**
+ * 异常发生后等待尾部窗口结束，再发送包含错误前后上下文的回放事件。
+ *
+ * 尾部窗口内再次发生异常时会延后同一次冲刷，避免重复上传相同事件；
+ * 每条错误报告仍保留各自的 replayOffset。
+ */
+export function flushReplayOnError(
+    errorContext: ReplayErrorContext | undefined = getReplayErrorContext(),
+): void {
+    if (!session || !errorContext) {
+        return;
+    }
+
+    const sessionId = session.sessionId;
+    clearPendingFlush();
+    if (postErrorDuration === 0) {
+        flushReplayBuffer(sessionId);
+        return;
+    }
+
+    pendingFlushTimer = setTimeout(() => {
+        pendingFlushTimer = undefined;
+        flushReplayBuffer(sessionId);
+    }, postErrorDuration);
 }
 
 /**

@@ -30,10 +30,13 @@ observeReplay({
   blockClass: "private-content",
   blockSelector: "[data-private], .secret",
   bufferSize: 100,
+  postErrorDuration: 2000,
 });
 ```
 
 `bufferSize` 控制异常发生前保留的近期 rrweb 事件数量，默认值为 `100`。最近一次 DOM full snapshot 会独立保留，因此异常上报的数据可以直接交给 rrweb 播放器恢复页面。
+
+`postErrorDuration` 控制异常发生后继续录制的时间，默认值为 `2000` 毫秒。错误报告会立即上报，回放事件会在尾部窗口结束后上报，因此错误时间位于回放内部而不是末尾。设为 `0` 可恢复异常后立即上报的行为。
 
 ## 错误定位
 
