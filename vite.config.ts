@@ -1,10 +1,13 @@
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig(({ mode }) => {
   const isIifeBuild = mode === "iife";
 
   return {
+    test: {
+      exclude: [...configDefaults.exclude, "react-demo/**"],
+    },
     build: {
       emptyOutDir: !isIifeBuild,
       lib: {
