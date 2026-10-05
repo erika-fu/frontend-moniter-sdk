@@ -22,6 +22,7 @@ frontendMonitor.subscribe(addReport);
 frontendMonitor.performance();
 frontendMonitor.behavior();
 frontendMonitor.error();
+frontendMonitor.replay();
 
 createApp(App)
     .use(router)

@@ -430,6 +430,132 @@ h2 {
     white-space: nowrap;
 }
 
+.replay-link {
+    flex-shrink: 0;
+    color: #285987;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.replay-link:hover {
+    color: #b45309;
+    text-decoration: underline;
+}
+
+.replay-count {
+    color: #718096;
+    font-size: 13px;
+}
+
+.replay-layout {
+    display: grid;
+    grid-template-columns: minmax(190px, 250px) minmax(0, 1fr);
+    gap: 18px;
+    margin-top: 24px;
+}
+
+.replay-sessions {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+}
+
+.replay-session {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+    padding: 12px;
+    cursor: pointer;
+    border: 1px solid #dce4ee;
+    border-radius: 6px;
+    background: #fff;
+    color: #40536a;
+    text-align: left;
+}
+
+.replay-session strong {
+    overflow: hidden;
+    color: #285987;
+    font: 12px/1.4 "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.replay-session span {
+    color: #718096;
+    font-size: 12px;
+}
+
+.replay-session:hover,
+.replay-session.active {
+    border-color: #315f94;
+}
+
+.replay-session.active {
+    background: #f0f6fc;
+}
+
+.replay-stage {
+    min-width: 0;
+    border: 1px solid #dce4ee;
+    background: #fff;
+}
+
+.replay-stage-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    border-bottom: 1px solid #dce4ee;
+}
+
+.replay-stage-heading .section-kicker {
+    margin-bottom: 6px;
+}
+
+.replay-stage-heading h2 {
+    overflow: hidden;
+    margin: 0;
+    color: #19253a;
+    font: 14px/1.4 "SFMono-Regular", Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.replay-stage-heading > span {
+    flex-shrink: 0;
+    color: #718096;
+    font-size: 12px;
+}
+
+.replay-player {
+    min-height: 240px;
+    overflow: hidden;
+    background: #172033;
+}
+
+.replay-missing {
+    display: grid;
+    min-height: 240px;
+    place-items: center;
+    align-content: center;
+    padding: 24px;
+    text-align: center;
+}
+
+.replay-missing h2 {
+    margin-bottom: 8px;
+    font-size: 18px;
+}
+
+.replay-missing p {
+    margin: 0;
+    color: #718096;
+    font-size: 13px;
+}
+
 .source-location {
     display: grid;
     gap: 5px;
@@ -588,6 +714,10 @@ pre {
     }
 
     .about-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .replay-layout {
         grid-template-columns: 1fr;
     }
 }

@@ -2,9 +2,11 @@
 import { computed, ref } from "vue";
 import type { SDKReportData } from "../../../src/index.js";
 import ErrorSourcePanel from "../components/ErrorSourcePanel.vue";
+import { RouterLink } from "vue-router";
 import {
     clearReports,
     getReportLocation,
+    getReplayRoute,
     reportTypes,
     reports,
 } from "../reportStore";
@@ -143,6 +145,13 @@ function throwVueError(): void {
                         <span class="report-page">
                             {{ getReportLocation(report) }}
                         </span>
+                        <RouterLink
+                            v-if="getReplayRoute(report)"
+                            class="replay-link"
+                            :to="getReplayRoute(report) ?? '/replay'"
+                        >
+                            查看录屏
+                        </RouterLink>
                     </div>
                     <ErrorSourcePanel :report="report" />
                     <pre>{{ JSON.stringify(report, null, 2) }}</pre>

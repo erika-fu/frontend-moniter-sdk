@@ -19,6 +19,7 @@ import SourceMapUploader from "./components/SourceMapUploader.vue";
         <nav class="main-nav" aria-label="主导航">
             <RouterLink to="/">监控概览</RouterLink>
             <RouterLink to="/reports">报告列表</RouterLink>
+            <RouterLink to="/replay">查看录屏</RouterLink>
             <RouterLink to="/about">SDK 说明</RouterLink>
         </nav>
 
