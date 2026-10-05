@@ -12,6 +12,28 @@ const props = defineProps<{
 const target = ref<HTMLElement>();
 const playerError = ref("");
 let player: rrwebPlayer | undefined;
+let seekFrame: number | undefined;
+
+function seekToInitialOffset(): void {
+    if (
+        !player ||
+        typeof props.initialOffset !== "number" ||
+        !Number.isFinite(props.initialOffset) ||
+        props.initialOffset < 0
+    ) {
+        return;
+    }
+
+    try {
+        const totalTime = player.getMetaData().totalTime;
+        const offset = Number.isFinite(totalTime)
+            ? Math.min(props.initialOffset, Math.max(0, totalTime))
+            : props.initialOffset;
+        player.goto(offset);
+    } catch {
+        playerError.value = "当前录屏数据无法定位";
+    }
+}
 
 onMounted(() => {
     void nextTick(() => {
@@ -31,13 +53,9 @@ onMounted(() => {
                 },
             });
 
-            if (
-                typeof props.initialOffset === "number" &&
-                Number.isFinite(props.initialOffset) &&
-                props.initialOffset > 0
-            ) {
-                player.goto(props.initialOffset);
-            }
+            // rrweb-player 的 Replayer 在构造后还会异步建立 mirror，
+            // 下一帧再次定位，避免初始 goto 被初始化流程覆盖。
+            seekFrame = window.requestAnimationFrame(seekToInitialOffset);
         } catch {
             playerError.value = "当前录屏数据无法播放";
             player = undefined;
@@ -46,6 +64,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+    if (seekFrame !== undefined) {
+        window.cancelAnimationFrame(seekFrame);
+        seekFrame = undefined;
+    }
     try {
         player?.pause();
         (
