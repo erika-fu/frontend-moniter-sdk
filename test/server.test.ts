@@ -23,8 +23,9 @@ afterEach(async () => {
 
 async function startServer(
     logger = vi.fn(),
+    options: Parameters<typeof createReportServer>[0] = {},
 ): Promise<{ baseUrl: string; logger: typeof logger }> {
-    const server = createReportServer({ logger });
+    const server = createReportServer({ ...options, logger });
     servers.push(server);
 
     await new Promise<void>((resolve) => {
@@ -94,6 +95,68 @@ describe("report server", () => {
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("ok");
         expect(logger).toHaveBeenCalledWith(report);
+    });
+
+    it("parses stacks and stores SourceMap-resolved frames", async () => {
+        const { baseUrl, logger } = await startServer(vi.fn(), {
+            stackResolution: {
+                sourceMapUrl: (fileUrl, release) => {
+                    expect(fileUrl).toBe("http://127.0.0.1/app.js");
+                    expect(release).toBe("demo@1.0.0");
+                    return "http://maps.example/app.js.map";
+                },
+            },
+        });
+        const sourceMapResponse = {
+            version: 3,
+            sources: ["src/demo.ts"],
+            names: [],
+            mappings: "AAAA",
+        };
+        const nativeFetch = globalThis.fetch;
+        const fetchMock = vi.fn().mockResolvedValueOnce(
+            new Response(JSON.stringify(sourceMapResponse), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const report = {
+            id: "id-stack",
+            data: [
+                {
+                    type: "error",
+                    subType: "js",
+                    msg: "boom",
+                    url: "http://127.0.0.1/app.js",
+                    lineNo: 1,
+                    columnNo: 1,
+                    stack: "Error: boom\n    at demo (http://127.0.0.1/app.js:1:1)",
+                    release: "demo@1.0.0",
+                },
+            ],
+        };
+
+        await nativeFetch(`${baseUrl}/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+        });
+
+        const saved = logger.mock.calls[0]?.[0] as {
+            data: [{ stackFrames: unknown[]; sourceStack: unknown[] }];
+        };
+        expect(saved.data[0].stackFrames).toHaveLength(1);
+        expect(saved.data[0].sourceStack[0]).toMatchObject({
+            originalFileName: "http://maps.example/src/demo.ts",
+            originalLineNumber: 1,
+            originalColumnNumber: 1,
+        });
+
+        const reportsResponse = await nativeFetch(`${baseUrl}/reports`);
+        expect(await reportsResponse.json()).toEqual([saved]);
+        vi.unstubAllGlobals();
     });
 
     it("handles browser CORS preflight requests", async () => {

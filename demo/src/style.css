@@ -364,6 +364,23 @@ h2 {
     white-space: nowrap;
 }
 
+.source-location {
+    display: grid;
+    gap: 5px;
+    margin: 14px;
+    padding: 12px;
+    border-left: 3px solid #3b6ea8;
+    background: #f4f7fb;
+    color: #40536a;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    overflow-wrap: anywhere;
+}
+
+.source-location strong {
+    color: #172033;
+    font-family: inherit;
+}
+
 pre {
     overflow-x: auto;
     margin: 0;

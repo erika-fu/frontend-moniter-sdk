@@ -43,6 +43,7 @@ describe("reporting", () => {
       projectName: "storefront",
       appId: "web",
       userId: "user-1",
+      release: "",
       isImageUpload: false,
       batchSize: 0,
     });

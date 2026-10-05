@@ -3,6 +3,7 @@ export interface ReportConfig {
     projectName: string;
     appId: string;
     userId: string;
+    release: string;
     isImageUpload: boolean;
     batchSize: number;
 }
@@ -12,6 +13,7 @@ export interface ReportConfigOptions {
     projectName?: string | undefined;
     appId?: string | undefined;
     userId?: string | undefined;
+    release?: string | undefined;
     isImageUpload?: boolean | undefined;
     batchSize?: number | undefined;
 }
@@ -21,6 +23,7 @@ const DEFAULT_CONFIG: Readonly<ReportConfig> = {
     projectName: "",
     appId: "",
     userId: "",
+    release: "",
     isImageUpload: false,
     batchSize: 5,
 };
@@ -42,6 +45,9 @@ export function setConfig(options: ReportConfigOptions = {}): void {
     }
     if (options.userId !== undefined) {
         config.userId = options.userId;
+    }
+    if (options.release !== undefined) {
+        config.release = options.release;
     }
     if (options.isImageUpload !== undefined) {
         config.isImageUpload = options.isImageUpload;

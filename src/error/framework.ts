@@ -1,4 +1,5 @@
 import { dispatchReport } from "../report.js";
+import config from "../config.js";
 import { getPageUrl } from "./utils.js";
 
 export interface VueErrorReportData {
@@ -8,6 +9,8 @@ export interface VueErrorReportData {
     info: string;
     pageUrl: string;
     startTime: number;
+    stack?: string | undefined;
+    release?: string | undefined;
 }
 
 export interface ReactErrorReportData {
@@ -17,6 +20,8 @@ export interface ReactErrorReportData {
     info: unknown;
     pageUrl: string;
     startTime: number;
+    stack?: string | undefined;
+    release?: string | undefined;
 }
 
 export type FrameworkErrorReportData =
@@ -67,6 +72,18 @@ function getErrorText(error: unknown): string {
         }
     }
     return String(error);
+}
+
+function getErrorStack(error: unknown): string | undefined {
+    if (error && typeof error === "object" && "stack" in error) {
+        const stack = (error as { stack?: unknown }).stack;
+        return typeof stack === "string" ? stack : undefined;
+    }
+    return undefined;
+}
+
+function getReportRelease(): string | undefined {
+    return config.release || undefined;
 }
 
 /**
@@ -123,6 +140,12 @@ export function install(
                 info,
                 pageUrl: getPageUrl(),
                 startTime: getStartTime(),
+                ...(getErrorStack(error)
+                    ? { stack: getErrorStack(error) }
+                    : {}),
+                ...(getReportRelease()
+                    ? { release: getReportRelease() }
+                    : {}),
             },
             state.onReport ?? frameworkReportHandler,
         );
@@ -152,6 +175,12 @@ export function errorBoundary(
             info,
             pageUrl: getPageUrl(),
             startTime: getStartTime(),
+            ...(getErrorStack(error)
+                ? { stack: getErrorStack(error) }
+                : {}),
+            ...(getReportRelease()
+                ? { release: getReportRelease() }
+                : {}),
         },
         reportHandler,
     );

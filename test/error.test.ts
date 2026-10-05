@@ -4,10 +4,12 @@ import {
   stopObserveError,
   type ErrorReportData,
 } from "../src/error/index.js";
+import { resetReportConfig, setConfig } from "../src/report.js";
 
 describe("observeError", () => {
   afterEach(() => {
     stopObserveError();
+    resetReportConfig();
     vi.unstubAllGlobals();
   });
 
@@ -89,6 +91,27 @@ describe("observeError", () => {
     });
   });
 
+  it("attaches the configured release to runtime errors", () => {
+    const onReport = vi.fn<(data: ErrorReportData) => void>();
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/" },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      onerror: null,
+    });
+    setConfig({ release: "web@1.2.3" });
+
+    observeError(onReport);
+    window.onerror?.("boom", "app.js", 7, 3, new Error("boom"));
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "js",
+        release: "web@1.2.3",
+      }),
+    );
+  });
+
   it("reports unhandled promise rejections", () => {
     const onReport = vi.fn<(data: ErrorReportData) => void>();
     const addEventListener = vi.fn();
@@ -114,6 +137,7 @@ describe("observeError", () => {
       type: "error",
       subType: "promise",
       reason: expect.stringContaining("rejected"),
+      stack: expect.stringContaining("Error: rejected"),
       pageUrl: "https://example.com/",
       startTime: 18,
     });

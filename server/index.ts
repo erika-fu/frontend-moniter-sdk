@@ -5,9 +5,30 @@ import {
     type ServerResponse,
 } from "node:http";
 import { pathToFileURL } from "node:url";
+import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 
 export interface ReportServerOptions {
     logger?: ((report: unknown) => void) | undefined;
+    stackResolution?: StackResolutionOptions | undefined;
+    store?: ReportStore | undefined;
+}
+
+export interface ReportStore {
+    save(report: unknown): void;
+    list(): unknown[];
+}
+
+export class InMemoryReportStore implements ReportStore {
+    private readonly reports: unknown[] = [];
+
+    save(report: unknown): void {
+        this.reports.unshift(report);
+        this.reports.splice(100);
+    }
+
+    list(): unknown[] {
+        return [...this.reports];
+    }
 }
 
 const CORS_HEADERS = {
@@ -53,10 +74,45 @@ function send(
     response.end(body);
 }
 
+function sendJson(
+    response: ServerResponse,
+    statusCode: number,
+    body: unknown,
+): void {
+    response.writeHead(statusCode, {
+        ...CORS_HEADERS,
+        "Content-Type": "application/json; charset=utf-8",
+    });
+    response.end(JSON.stringify(body));
+}
+
+async function resolveReportPayload(
+    payload: unknown,
+    options: StackResolutionOptions,
+): Promise<unknown> {
+    if (!payload || typeof payload !== "object") {
+        return payload;
+    }
+
+    const candidate = payload as { data?: unknown };
+    if (Array.isArray(candidate.data)) {
+        return {
+            ...candidate,
+            data: await Promise.all(
+                candidate.data.map((item) => resolveErrorStack(item, options)),
+            ),
+        };
+    }
+
+    return resolveErrorStack(payload, options);
+}
+
 export function createReportServer(
     options: ReportServerOptions = {},
 ): Server {
     const logger = options.logger ?? console.log;
+    const store = options.store ?? new InMemoryReportStore();
+    const stackResolution = options.stackResolution ?? {};
 
     return createServer(async (request, response) => {
         const url = new URL(request.url ?? "/", "http://localhost");
@@ -67,19 +123,33 @@ export function createReportServer(
         }
 
         if (url.pathname !== "/reportData") {
+            if (url.pathname === "/reports" && request.method === "GET") {
+                sendJson(response, 200, store.list());
+                return;
+            }
             send(response, 404, "Not Found");
             return;
         }
 
         if (request.method === "GET") {
             const data = url.searchParams.get("data");
-            logger(data === null ? null : parseJson(data));
+            const report = await resolveReportPayload(
+                data === null ? null : parseJson(data),
+                stackResolution,
+            );
+            store.save(report);
+            logger(report);
             send(response, 200, "ok");
             return;
         }
 
         if (request.method === "POST") {
-            logger(await readRequestBody(request));
+            const report = await resolveReportPayload(
+                await readRequestBody(request),
+                stackResolution,
+            );
+            store.save(report);
+            logger(report);
             send(response, 200, "ok");
             return;
         }
@@ -94,7 +164,14 @@ if (
     import.meta.url === pathToFileURL(entryPath).href
 ) {
     const port = Number.parseInt(process.env.PORT ?? "9800", 10);
-    const server = createReportServer();
+    const server = createReportServer({
+        stackResolution: {
+            sourceMapUrl: (fileUrl) =>
+                fileUrl.startsWith("http://localhost:4173/")
+                    ? `${fileUrl}.map`
+                    : undefined,
+        },
+    });
 
     server.listen(port, () => {
         console.log(`server is running on ${port}`);

@@ -1,6 +1,7 @@
 import type { FrameworkErrorReportData } from "./framework.js";
 import { getSerializableEventPath } from "../eventPath.js";
 import { dispatchReport } from "../report.js";
+import config from "../config.js";
 import { getPageUrl } from "./utils.js";
 
 export { errorBoundary, install } from "./framework.js";
@@ -43,6 +44,7 @@ export interface JavaScriptErrorReportData extends RuntimeErrorReportBase {
     columnNo: number | undefined;
     startTime: number;
     stack?: string | undefined;
+    release?: string | undefined;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface JavaScriptErrorReportData extends RuntimeErrorReportBase {
 export interface PromiseErrorReportData extends RuntimeErrorReportBase {
     subType: "promise";
     reason: string;
+    stack?: string | undefined;
+    release?: string | undefined;
     startTime: number;
 }
 
@@ -96,6 +100,10 @@ function getErrorReason(reason: unknown): string {
         }
     }
     return String(reason);
+}
+
+function getReportRelease(): string | undefined {
+    return config.release || undefined;
 }
 
 function getResourceUrl(target: EventTarget): string | undefined {
@@ -160,11 +168,16 @@ export function observeError(onReport?: ErrorReportHandler): void {
     };
 
     rejectionHandler = (event: PromiseRejectionEvent) => {
+        const stack = getErrorStack(event.reason);
         dispatchReport(
             {
                 type: "error",
                 subType: "promise",
                 reason: getErrorReason(event.reason),
+                ...(stack ? { stack } : {}),
+                ...(getReportRelease()
+                    ? { release: getReportRelease() }
+                    : {}),
                 pageUrl: getPageUrl(),
                 startTime: event.timeStamp,
             },
@@ -195,6 +208,9 @@ export function observeError(onReport?: ErrorReportHandler): void {
                 columnNo: colno,
                 ...(getErrorStack(error)
                     ? { stack: getErrorStack(error) }
+                    : {}),
+                ...(getReportRelease()
+                    ? { release: getReportRelease() }
                     : {}),
                 pageUrl: getPageUrl(),
                 startTime: performance.now(),
