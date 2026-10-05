@@ -137,6 +137,7 @@ describe("observeReplay", () => {
         vi.stubGlobal("performance", { now: () => 10 });
 
         observeReplay({ onReport, postErrorDuration: 0 });
+        const firstSession = getReplaySession()!;
         emit?.({ type: 4, timestamp: 20, data: {} } as eventWithTime);
         emit?.({ type: 2, timestamp: 30, data: {} } as eventWithTime);
         emit?.({ type: 3, timestamp: 40, data: {} } as unknown as eventWithTime);
@@ -146,12 +147,31 @@ describe("observeReplay", () => {
             [20, 30, 40],
         );
 
+        const nextSession = getReplaySession()!;
+        expect(nextSession.sessionId).not.toBe(firstSession.sessionId);
         onReport.mockClear();
-        emit?.({ type: 3, timestamp: 50, data: {} } as unknown as eventWithTime);
+        emit?.({
+            type: 4,
+            timestamp: nextSession.startedAt,
+            data: {},
+        } as eventWithTime);
+        emit?.({
+            type: 2,
+            timestamp: nextSession.startedAt + 1,
+            data: {},
+        } as eventWithTime);
+        emit?.({
+            type: 3,
+            timestamp: nextSession.startedAt + 2,
+            data: {},
+        } as unknown as eventWithTime);
         flushReplayOnError();
-        expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual(
-            [20, 30, 50],
-        );
+        expect(onReport.mock.calls).toHaveLength(3);
+        expect(
+            onReport.mock.calls.every(
+                ([report]) => report.sessionId === nextSession.sessionId,
+            ),
+        ).toBe(true);
     });
 
     it("includes events recorded during the post-error window", () => {

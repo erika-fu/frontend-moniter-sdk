@@ -67,6 +67,7 @@ let snapshot: BufferedReplayEvent | undefined;
 let bootstrapEvents: BufferedReplayEvent[] = [];
 let postErrorDuration = DEFAULT_POST_ERROR_DURATION;
 let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
+let replayOptions: ReplayMonitoringOptions = {};
 
 function getNow(): number {
     if (
@@ -166,24 +167,7 @@ function createReplayReport(
     };
 }
 
-/**
- * 启动当前页面的 rrweb 录制。重复调用只更新回调和配置，不会重复录制。
- */
-export function observeReplay(
-    options: ReplayMonitoringOptions = {},
-): void {
-    if (typeof window === "undefined") {
-        return;
-    }
-
-    if (session) {
-        reportHandler = options.onReport;
-        postErrorDuration = normalizePostErrorDuration(
-            options.postErrorDuration,
-        );
-        return;
-    }
-
+function startReplaySession(): void {
     const currentSession: ReplaySession = {
         id: createReplayId(),
         sessionId: "",
@@ -192,11 +176,6 @@ export function observeReplay(
     };
     currentSession.sessionId = currentSession.id;
     session = currentSession;
-    reportHandler = options.onReport;
-    bufferSize = normalizeBufferSize(options.bufferSize);
-    postErrorDuration = normalizePostErrorDuration(
-        options.postErrorDuration,
-    );
     resetReplayBuffer();
 
     const recordOptions: recordOptions<eventWithTime> = {
@@ -216,9 +195,9 @@ export function observeReplay(
             }
             addToRingBuffer(bufferedEvent);
         },
-        maskAllInputs: options.maskAllInputs ?? true,
-        blockClass: options.blockClass ?? "monitor-block",
-        blockSelector: options.blockSelector ?? "[data-monitor-mask]",
+        maskAllInputs: replayOptions.maskAllInputs ?? true,
+        blockClass: replayOptions.blockClass ?? "monitor-block",
+        blockSelector: replayOptions.blockSelector ?? "[data-monitor-mask]",
     };
 
     try {
@@ -232,6 +211,34 @@ export function observeReplay(
 }
 
 /**
+ * 启动当前页面的 rrweb 录制。重复调用只更新回调和配置，不会重复录制。
+ */
+export function observeReplay(
+    options: ReplayMonitoringOptions = {},
+): void {
+    if (typeof window === "undefined") {
+        return;
+    }
+
+    if (session) {
+        replayOptions = { ...replayOptions, ...options };
+        reportHandler = options.onReport;
+        postErrorDuration = normalizePostErrorDuration(
+            options.postErrorDuration,
+        );
+        return;
+    }
+
+    replayOptions = { ...options };
+    reportHandler = options.onReport;
+    bufferSize = normalizeBufferSize(options.bufferSize);
+    postErrorDuration = normalizePostErrorDuration(
+        options.postErrorDuration,
+    );
+    startReplaySession();
+}
+
+/**
  * 停止录制并释放 rrweb 监听器。
  */
 export function stopObserveReplay(): void {
@@ -240,6 +247,7 @@ export function stopObserveReplay(): void {
     stopRecording = undefined;
     session = undefined;
     reportHandler = undefined;
+    replayOptions = {};
     resetReplayBuffer();
 }
 
@@ -276,15 +284,22 @@ function flushReplayBuffer(sessionId: string): void {
         return;
     }
 
+    const finishedSession = session;
     const events = getBufferedEvents();
     for (const bufferedEvent of events) {
         dispatchReport(
-            createReplayReport(session, bufferedEvent),
+            createReplayReport(finishedSession, bufferedEvent),
             reportHandler,
         );
     }
-    clearReplayEvents();
     flushReportQueue();
+
+    // 一个错误片段对应一个独立 session，避免后续片段复用旧 snapshot。
+    stopRecording?.();
+    stopRecording = undefined;
+    session = undefined;
+    resetReplayBuffer();
+    startReplaySession();
 }
 
 /**
