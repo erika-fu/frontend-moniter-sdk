@@ -10,3 +10,5 @@ coverage/
 .env.*
 !.env.example
 docs/
+!docs/
+!docs/*.md
