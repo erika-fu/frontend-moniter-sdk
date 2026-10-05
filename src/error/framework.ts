@@ -1,6 +1,7 @@
 import { dispatchReport } from "../report.js";
 import config from "../config.js";
 import { getPageUrl } from "./utils.js";
+import { getReplayErrorContext } from "../replay/index.js";
 
 export interface VueErrorReportData {
     type: "error";
@@ -11,6 +12,8 @@ export interface VueErrorReportData {
     startTime: number;
     stack?: string | undefined;
     release?: string | undefined;
+    replayId?: string;
+    replayOffset?: number;
 }
 
 export interface ReactErrorReportData {
@@ -22,6 +25,8 @@ export interface ReactErrorReportData {
     startTime: number;
     stack?: string | undefined;
     release?: string | undefined;
+    replayId?: string;
+    replayOffset?: number;
 }
 
 export type FrameworkErrorReportData =
@@ -146,6 +151,7 @@ export function install(
                 ...(getReportRelease()
                     ? { release: getReportRelease() }
                     : {}),
+                ...(getReplayErrorContext() ?? {}),
             },
             state.onReport ?? frameworkReportHandler,
         );
@@ -181,6 +187,7 @@ export function errorBoundary(
             ...(getReportRelease()
                 ? { release: getReportRelease() }
                 : {}),
+            ...(getReplayErrorContext() ?? {}),
         },
         reportHandler,
     );

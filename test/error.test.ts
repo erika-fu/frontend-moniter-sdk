@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+const { record } = vi.hoisted(() => ({
+  record: vi.fn(() => vi.fn()),
+}));
+
+vi.mock("rrweb", () => ({ record }));
+
 import {
   observeError,
   stopObserveError,
   type ErrorReportData,
 } from "../src/error/index.js";
+import { observeReplay, stopObserveReplay } from "../src/replay/index.js";
 import { resetReportConfig, setConfig } from "../src/report.js";
 
 describe("observeError", () => {
   afterEach(() => {
     stopObserveError();
+    stopObserveReplay();
     resetReportConfig();
     vi.unstubAllGlobals();
   });
@@ -108,6 +116,30 @@ describe("observeError", () => {
       expect.objectContaining({
         subType: "js",
         release: "web@1.2.3",
+      }),
+    );
+  });
+
+  it("attaches the replay position to runtime errors", () => {
+    const onReport = vi.fn<(data: ErrorReportData) => void>();
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/" },
+      performance: { now: () => 42 },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      onerror: null,
+    });
+
+    observeReplay();
+    observeError(onReport);
+    window.onerror?.("boom", "app.js", 7, 3, new Error("boom"));
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "js",
+        replayId: expect.stringMatching(/^replay-/),
+        replayOffset: 0,
       }),
     );
   });

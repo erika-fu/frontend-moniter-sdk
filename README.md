@@ -59,6 +59,7 @@ frontendMonitor.init({
 frontendMonitor.performance();
 frontendMonitor.behavior();
 frontendMonitor.error();
+frontendMonitor.replay();
 ```
 
 The SDK batches reports, prefers `navigator.sendBeacon`, and falls back to an
@@ -69,6 +70,21 @@ network request is made and `onReport` continues to receive every report.
 Use `frontendMonitor.subscribe(handler)` when the application also needs to
 observe collected data locally. Subscriptions do not configure or replace
 network reporting.
+
+Session replay uses rrweb. It masks all input values by default and blocks
+elements with the `monitor-block` class or `data-monitor-mask` attribute:
+
+```ts
+frontendMonitor.replay({
+  onReport: (event) => console.log(event),
+  maskAllInputs: true,
+});
+```
+
+Runtime error reports collected during replay include `replayId` and
+`replayOffset`, allowing a report viewer to open the session at the error
+position. See [Replay 会话录屏](docs/replay.md) for privacy and playback
+integration details.
 
 Install Vue error capture through the application plugin API. It reuses the
 configuration provided to `init`:
@@ -110,6 +126,15 @@ npm --prefix demo run dev
 ```
 
 Then visit `http://localhost:4173/`.
+
+## Documentation
+
+- [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA 接入
+- [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
+- [Behavior 用户行为监控](docs/behavior.md)：PV、点击/触摸、hash/history 变化和 ID
+- [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
+- [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位
+- [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输和事件路径
 
 ## Report server
 

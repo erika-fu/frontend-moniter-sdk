@@ -32,6 +32,7 @@
   "sideEffects": false,
   "dependencies": {
     "error-stack-parser": "^2.1.4",
+    "rrweb": "^2.1.7",
     "source-map-js": "^1.2.2",
     "web-vitals": "^6.2.2"
   },

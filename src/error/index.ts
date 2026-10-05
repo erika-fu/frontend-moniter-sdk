@@ -3,6 +3,7 @@ import { getSerializableEventPath } from "../eventPath.js";
 import { dispatchReport } from "../report.js";
 import config from "../config.js";
 import { getPageUrl } from "./utils.js";
+import { getReplayErrorContext } from "../replay/index.js";
 
 export { errorBoundary, install } from "./framework.js";
 export type {
@@ -20,6 +21,8 @@ export type {
 interface RuntimeErrorReportBase {
     type: "error";
     pageUrl: string;
+    replayId?: string;
+    replayOffset?: number;
 }
 
 /**
@@ -161,6 +164,7 @@ export function observeError(onReport?: ErrorReportHandler): void {
                 url,
                 html: element.outerHTML ?? "",
                 pageUrl: getPageUrl(),
+                ...(getReplayErrorContext() ?? {}),
                 ...(paths ? { paths } : {}),
             },
             reportHandler,
@@ -180,6 +184,7 @@ export function observeError(onReport?: ErrorReportHandler): void {
                     : {}),
                 pageUrl: getPageUrl(),
                 startTime: event.timeStamp,
+                ...(getReplayErrorContext() ?? {}),
             },
             reportHandler,
         );
@@ -214,6 +219,7 @@ export function observeError(onReport?: ErrorReportHandler): void {
                     : {}),
                 pageUrl: getPageUrl(),
                 startTime: performance.now(),
+                ...(getReplayErrorContext() ?? {}),
             },
             reportHandler,
         );

@@ -22,12 +22,18 @@ import {
     subscribeReports,
     type ReportConfigOptions,
 } from "./report.js";
+import {
+    createReplayUrl,
+    observeReplay,
+    type ReplayReportData,
+} from "./replay/index.js";
 
 export const SDK_NAME = "frontend-moniter-sdk";
 
 export * from "./behavior/index.js";
 export * from "./error/index.js";
 export * from "./performance/index.js";
+export * from "./replay/index.js";
 export {
     beaconRequest,
     flushReportQueue,
@@ -45,7 +51,8 @@ export {
 export type SDKReportData =
     | BehaviorReportData
     | ErrorReportData
-    | PerformanceReportData;
+    | PerformanceReportData
+    | ReplayReportData;
 export type SDKReportHandler = (reportData: SDKReportData) => void;
 
 export type SDKOptions = ReportConfigOptions;
@@ -72,9 +79,12 @@ const sdk = {
     behavior: observeBehavior,
     performance: observePerformance,
     error: observeError,
+    replay: observeReplay,
+    createReplayUrl,
     observeBehavior,
     observePerformance,
     observeError,
+    observeReplay,
 };
 
 export default sdk;

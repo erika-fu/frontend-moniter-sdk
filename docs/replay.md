@@ -1,0 +1,48 @@
+# Replay 会话录屏
+
+录屏模块基于 rrweb 记录页面 DOM、输入和交互事件，并通过 SDK 现有的批量上报通道发送。录屏不会在 `init()` 时自动启动，需要显式调用：
+
+```ts
+import monitor, {
+  observeReplay,
+  stopObserveReplay,
+} from "frontend-moniter-sdk";
+
+monitor.init({ url: "/monitor", appId: "web" });
+observeReplay();
+stopObserveReplay();
+```
+
+也可以使用默认导出的 `monitor.replay()`。`observeReplay()` 在同一个页面重复调用只更新回调，不会创建第二个 rrweb 录制器。
+
+## 隐私保护
+
+默认配置会将所有输入框的值脱敏，并屏蔽以下元素及其子树：
+
+- class 为 `monitor-block` 的元素
+- 带 `data-monitor-mask` 属性的元素
+
+可按页面需要覆盖：
+
+```ts
+observeReplay({
+  maskAllInputs: true,
+  blockClass: "private-content",
+  blockSelector: "[data-private], .secret",
+});
+```
+
+## 错误定位
+
+录制期间产生的错误报告会附加 `replayId` 和 `replayOffset`。`replayId` 用于关联一段录屏事件，`replayOffset` 是错误发生时距录制开始的毫秒数。服务端保存同一 `replayId` 的 `replay` 事件后，可将错误详情中的回放按钮链接到对应会话，并从 `replayOffset` 开始播放。
+
+SDK 提供 `createReplayUrl()` 生成回放页地址，回放页面读取这两个查询参数即可定位：
+
+```ts
+const url = createReplayUrl("/replay", {
+  replayId: error.replayId,
+  replayOffset: error.replayOffset,
+});
+```
+
+录屏事件的形状为 `ReplayEventReportData`，其中 `event` 是 rrweb 事件，`startTime` 是 rrweb 事件时间戳，`replayOffset` 是统一的相对毫秒时间轴。
