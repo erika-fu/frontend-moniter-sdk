@@ -1,7 +1,10 @@
 import { dispatchReport } from "../report.js";
 import config from "../config.js";
 import { getPageUrl } from "./utils.js";
-import { getReplayErrorContext } from "../replay/index.js";
+import {
+    flushReplayOnError,
+    getReplayErrorContext,
+} from "../replay/index.js";
 
 export interface VueErrorReportData {
     type: "error";
@@ -13,6 +16,7 @@ export interface VueErrorReportData {
     stack?: string | undefined;
     release?: string | undefined;
     replayId?: string;
+    sessionId?: string;
     replayOffset?: number;
 }
 
@@ -26,6 +30,7 @@ export interface ReactErrorReportData {
     stack?: string | undefined;
     release?: string | undefined;
     replayId?: string;
+    sessionId?: string;
     replayOffset?: number;
 }
 
@@ -137,6 +142,7 @@ export function install(
 
     // 包装框架错误处理器，在上报后继续调用应用原有处理器。
     state.installedHandler = function (error, instance, info) {
+        const replayContext = getReplayErrorContext();
         dispatchReport(
             {
                 type: "error",
@@ -151,10 +157,11 @@ export function install(
                 ...(getReportRelease()
                     ? { release: getReportRelease() }
                     : {}),
-                ...(getReplayErrorContext() ?? {}),
+                ...(replayContext ?? {}),
             },
             state.onReport ?? frameworkReportHandler,
         );
+        flushReplayOnError(replayContext);
 
         return previousHandler?.call(this, error, instance, info);
     };
@@ -173,6 +180,7 @@ export function errorBoundary(
     onReport?: FrameworkErrorReportHandler,
 ): void {
     const reportHandler = onReport ?? frameworkReportHandler;
+    const replayContext = getReplayErrorContext();
     dispatchReport(
         {
             type: "error",
@@ -187,8 +195,9 @@ export function errorBoundary(
             ...(getReportRelease()
                 ? { release: getReportRelease() }
                 : {}),
-            ...(getReplayErrorContext() ?? {}),
+            ...(replayContext ?? {}),
         },
         reportHandler,
     );
+    flushReplayOnError(replayContext);
 }

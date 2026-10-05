@@ -3,7 +3,11 @@ import { getSerializableEventPath } from "../eventPath.js";
 import { dispatchReport } from "../report.js";
 import config from "../config.js";
 import { getPageUrl } from "./utils.js";
-import { getReplayErrorContext } from "../replay/index.js";
+import {
+    flushReplayOnError,
+    getReplayErrorContext,
+    type ReplayErrorContext,
+} from "../replay/index.js";
 
 export { errorBoundary, install } from "./framework.js";
 export type {
@@ -22,6 +26,7 @@ interface RuntimeErrorReportBase {
     type: "error";
     pageUrl: string;
     replayId?: string;
+    sessionId?: string;
     replayOffset?: number;
 }
 
@@ -121,6 +126,14 @@ function getResourceUrl(target: EventTarget): string | undefined {
     return resource.src || resource.href || undefined;
 }
 
+function dispatchErrorReport(
+    data: ErrorReportData,
+    context: ReplayErrorContext | undefined,
+): void {
+    dispatchReport(data, reportHandler);
+    flushReplayOnError(context);
+}
+
 /**
  * 监听资源加载失败、同步 JavaScript 异常和未处理 Promise rejection。
  *
@@ -157,23 +170,25 @@ export function observeError(onReport?: ErrorReportHandler): void {
             outerHTML?: string;
         };
         const paths = getSerializableEventPath(event);
-        dispatchReport(
+        const replayContext = getReplayErrorContext();
+        dispatchErrorReport(
             {
                 type: "error",
                 subType: "resource",
                 url,
                 html: element.outerHTML ?? "",
                 pageUrl: getPageUrl(),
-                ...(getReplayErrorContext() ?? {}),
+                ...(replayContext ?? {}),
                 ...(paths ? { paths } : {}),
             },
-            reportHandler,
+            replayContext,
         );
     };
 
     rejectionHandler = (event: PromiseRejectionEvent) => {
         const stack = getErrorStack(event.reason);
-        dispatchReport(
+        const replayContext = getReplayErrorContext();
+        dispatchErrorReport(
             {
                 type: "error",
                 subType: "promise",
@@ -184,9 +199,9 @@ export function observeError(onReport?: ErrorReportHandler): void {
                     : {}),
                 pageUrl: getPageUrl(),
                 startTime: event.timeStamp,
-                ...(getReplayErrorContext() ?? {}),
+                ...(replayContext ?? {}),
             },
-            reportHandler,
+            replayContext,
         );
     };
 
@@ -203,7 +218,8 @@ export function observeError(onReport?: ErrorReportHandler): void {
         colno,
         error,
     ) => {
-        dispatchReport(
+        const replayContext = getReplayErrorContext();
+        dispatchErrorReport(
             {
                 type: "error",
                 subType: "js",
@@ -219,9 +235,9 @@ export function observeError(onReport?: ErrorReportHandler): void {
                     : {}),
                 pageUrl: getPageUrl(),
                 startTime: performance.now(),
-                ...(getReplayErrorContext() ?? {}),
+                ...(replayContext ?? {}),
             },
-            reportHandler,
+            replayContext,
         );
 
         return previousOnError?.call(

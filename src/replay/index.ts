@@ -3,10 +3,14 @@ import {
     type eventWithTime,
     type recordOptions,
 } from "rrweb";
-import { dispatchReport } from "../report.js";
+import { dispatchReport, flushReportQueue } from "../report.js";
+
+const DEFAULT_BUFFER_SIZE = 100;
+const FULL_SNAPSHOT_EVENT_TYPE = 2;
 
 export interface ReplaySession {
     id: string;
+    sessionId: string;
     startTime: number;
     startedAt: number;
 }
@@ -15,6 +19,7 @@ export interface ReplayEventReportData {
     type: "replay";
     subType: "event";
     replayId: string;
+    sessionId?: string;
     event: eventWithTime;
     startTime: number;
     replayOffset: number;
@@ -25,8 +30,10 @@ export type ReplayReportHandler = (reportData: ReplayEventReportData) => void;
 export type ReplayReportData = ReplayEventReportData;
 
 export interface ReplayMonitoringOptions {
-    /** 接收录屏事件，不影响 SDK 自身上报。 */
+    /** 异常发生时接收缓存的录屏事件，不影响 SDK 自身上报。 */
     onReport?: ReplayReportHandler;
+    /** 环形缓存最多保留的 rrweb 事件数，默认 100。 */
+    bufferSize?: number;
     /** 是否脱敏全部输入框，默认开启。 */
     maskAllInputs?: boolean;
     /** 需要屏蔽的元素 class，默认是 `monitor-block`。 */
@@ -37,12 +44,24 @@ export interface ReplayMonitoringOptions {
 
 export interface ReplayErrorContext {
     replayId: string;
+    sessionId?: string;
     replayOffset: number;
+}
+
+interface BufferedReplayEvent {
+    event: eventWithTime;
+    isCheckout?: boolean;
 }
 
 let session: ReplaySession | undefined;
 let stopRecording: (() => void) | undefined;
 let reportHandler: ReplayReportHandler | undefined;
+let buffer: Array<BufferedReplayEvent | undefined> = [];
+let bufferSize = DEFAULT_BUFFER_SIZE;
+let bufferStart = 0;
+let bufferLength = 0;
+let snapshot: BufferedReplayEvent | undefined;
+let bootstrapEvents: BufferedReplayEvent[] = [];
 
 function getNow(): number {
     if (
@@ -56,6 +75,71 @@ function getNow(): number {
 
 function createReplayId(): string {
     return `replay-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function normalizeBufferSize(value: number | undefined): number {
+    return Number.isFinite(value)
+        ? Math.max(1, Math.floor(value as number))
+        : DEFAULT_BUFFER_SIZE;
+}
+
+function resetReplayBuffer(): void {
+    buffer = [];
+    bufferStart = 0;
+    bufferLength = 0;
+    snapshot = undefined;
+    bootstrapEvents = [];
+}
+
+function addToRingBuffer(value: BufferedReplayEvent): void {
+    if (bufferSize <= 0) {
+        return;
+    }
+
+    if (buffer.length !== bufferSize) {
+        buffer = Array.from({ length: bufferSize });
+    }
+
+    const index = (bufferStart + bufferLength) % bufferSize;
+    buffer[index] = value;
+    if (bufferLength < bufferSize) {
+        bufferLength += 1;
+    } else {
+        bufferStart = (bufferStart + 1) % bufferSize;
+    }
+}
+
+function getBufferedEvents(): BufferedReplayEvent[] {
+    const events: BufferedReplayEvent[] = [...bootstrapEvents];
+    if (snapshot) {
+        events.push(snapshot);
+    }
+    for (let index = 0; index < bufferLength; index += 1) {
+        const event = buffer[(bufferStart + index) % bufferSize];
+        if (event) {
+            events.push(event);
+        }
+    }
+    return events;
+}
+
+function createReplayReport(
+    currentSession: ReplaySession,
+    bufferedEvent: BufferedReplayEvent,
+): ReplayEventReportData {
+    return {
+        type: "replay",
+        subType: "event",
+        replayId: currentSession.id,
+        sessionId: currentSession.sessionId,
+        event: bufferedEvent.event,
+        startTime: bufferedEvent.event.timestamp,
+        replayOffset: Math.max(
+            0,
+            bufferedEvent.event.timestamp - currentSession.startedAt,
+        ),
+        ...(bufferedEvent.isCheckout ? { isCheckout: true } : {}),
+    };
 }
 
 /**
@@ -75,29 +159,34 @@ export function observeReplay(
 
     const currentSession: ReplaySession = {
         id: createReplayId(),
+        sessionId: "",
         startTime: getNow(),
         startedAt: Date.now(),
     };
+    currentSession.sessionId = currentSession.id;
     session = currentSession;
     reportHandler = options.onReport;
+    bufferSize = normalizeBufferSize(options.bufferSize);
+    resetReplayBuffer();
 
     const recordOptions: recordOptions<eventWithTime> = {
         emit: (event, isCheckout) => {
-            dispatchReport(
-                {
-                    type: "replay",
-                    subType: "event",
-                    replayId: currentSession.id,
-                    event,
-                    startTime: event.timestamp,
-                    replayOffset: Math.max(
-                        0,
-                        event.timestamp - currentSession.startedAt,
-                    ),
-                    ...(isCheckout ? { isCheckout: true } : {}),
-                },
-                reportHandler,
-            );
+            const bufferedEvent: BufferedReplayEvent = {
+                event,
+                ...(isCheckout ? { isCheckout: true } : {}),
+            };
+            if (event.type === FULL_SNAPSHOT_EVENT_TYPE) {
+                snapshot = bufferedEvent;
+                buffer = [];
+                bufferStart = 0;
+                bufferLength = 0;
+                return;
+            }
+            if (!snapshot && (event.type === 0 || event.type === 1)) {
+                bootstrapEvents.push(bufferedEvent);
+                return;
+            }
+            addToRingBuffer(bufferedEvent);
         },
         maskAllInputs: options.maskAllInputs ?? true,
         blockClass: options.blockClass ?? "monitor-block",
@@ -109,6 +198,7 @@ export function observeReplay(
     } catch {
         session = undefined;
         reportHandler = undefined;
+        resetReplayBuffer();
     }
 }
 
@@ -120,6 +210,7 @@ export function stopObserveReplay(): void {
     stopRecording = undefined;
     session = undefined;
     reportHandler = undefined;
+    resetReplayBuffer();
 }
 
 /**
@@ -139,8 +230,33 @@ export function getReplayErrorContext(): ReplayErrorContext | undefined {
 
     return {
         replayId: session.id,
+        sessionId: session.sessionId,
         replayOffset: Math.max(0, getNow() - session.startTime),
     };
+}
+
+/**
+ * 异常发生时发送环形缓存中的回放事件，并把缓存清空。
+ *
+ * 错误报告应先取得上下文，再调用本函数，这样错误和回放事件会拥有
+ * 同一个 sessionId 与 replayOffset。
+ */
+export function flushReplayOnError(
+    errorContext: ReplayErrorContext | undefined = getReplayErrorContext(),
+): void {
+    if (!session || !errorContext) {
+        return;
+    }
+
+    const events = getBufferedEvents();
+    for (const bufferedEvent of events) {
+        dispatchReport(
+            createReplayReport(session, bufferedEvent),
+            reportHandler,
+        );
+    }
+    resetReplayBuffer();
+    flushReportQueue();
 }
 
 /**
@@ -154,6 +270,9 @@ export function createReplayUrl(
         typeof window !== "undefined" ? window.location.href : undefined;
     const url = new URL(baseUrl, pageUrl ?? "http://localhost");
     url.searchParams.set("replayId", context.replayId);
+    if (context.sessionId) {
+        url.searchParams.set("sessionId", context.sessionId);
+    }
     url.searchParams.set("replayOffset", String(context.replayOffset));
     return url.toString();
 }

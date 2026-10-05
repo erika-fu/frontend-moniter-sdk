@@ -9,6 +9,7 @@ vi.mock("rrweb", () => ({ record }));
 
 import {
     createReplayUrl,
+    flushReplayOnError,
     getReplaySession,
     observeReplay,
     stopObserveReplay,
@@ -30,7 +31,7 @@ describe("observeReplay", () => {
         expect(getReplaySession()).toBeUndefined();
     });
 
-    it("starts a privacy-safe rrweb session and reports its events", () => {
+    it("buffers rrweb events until an error flushes the session", () => {
         const onReport = vi.fn();
         const stop = vi.fn();
         let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
@@ -43,7 +44,9 @@ describe("observeReplay", () => {
 
         observeReplay({ onReport });
         const session = getReplaySession();
-        emit?.({ type: 4, timestamp: 40, data: {} } as eventWithTime, true);
+        emit?.({ type: 4, timestamp: 30, data: {} } as eventWithTime);
+        emit?.({ type: 2, timestamp: 40, data: {} } as eventWithTime, true);
+        emit?.({ type: 3, timestamp: 50, data: {} } as eventWithTime);
 
         expect(record).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -55,19 +58,35 @@ describe("observeReplay", () => {
         expect(session).toEqual(
             expect.objectContaining({
                 id: expect.stringMatching(/^replay-/),
+                sessionId: expect.stringMatching(/^replay-/),
                 startTime: 25,
                 startedAt: expect.any(Number),
             }),
         );
+        expect(onReport).not.toHaveBeenCalled();
+
+        flushReplayOnError({
+            replayId: session!.id,
+            sessionId: session!.sessionId,
+            replayOffset: 50,
+        });
+
         expect(onReport).toHaveBeenCalledWith({
             type: "replay",
             subType: "event",
             replayId: session?.id,
-            event: { type: 4, timestamp: 40, data: {} },
+            sessionId: session?.sessionId,
+            event: { type: 2, timestamp: 40, data: {} },
             startTime: 40,
             replayOffset: expect.any(Number),
             isCheckout: true,
         });
+        expect(onReport).toHaveBeenCalledWith(
+            expect.objectContaining({
+                event: { type: 3, timestamp: 50, data: {} },
+                sessionId: session?.sessionId,
+            }),
+        );
     });
 
     it("creates a seekable URL from replay error context", () => {
@@ -77,6 +96,29 @@ describe("observeReplay", () => {
                 replayOffset: 123.5,
             }),
         ).toBe("http://localhost/replay?replayId=replay-1&replayOffset=123.5");
+    });
+
+    it("keeps the snapshot and only the newest events in the ring buffer", () => {
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+        vi.stubGlobal("performance", { now: () => 10 });
+
+        observeReplay({ onReport, bufferSize: 2 });
+        emit?.({ type: 2, timestamp: 100, data: {} } as eventWithTime);
+        emit?.({ type: 3, timestamp: 101, data: { value: 1 } } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: 102, data: { value: 2 } } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: 103, data: { value: 3 } } as unknown as eventWithTime);
+
+        flushReplayOnError();
+
+        expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual(
+            [100, 102, 103],
+        );
     });
 
     it("updates the callback without starting another session", () => {
