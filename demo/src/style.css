@@ -179,18 +179,60 @@ h2 {
     display: inline-flex;
     align-items: center;
     gap: 9px;
-    color: #287650;
+    color: #718096;
     font-size: 14px;
     font-weight: 700;
     white-space: nowrap;
+}
+
+.live-status.recording {
+    color: #287650;
 }
 
 .status-dot {
     width: 9px;
     height: 9px;
     border-radius: 50%;
+    background: #9aa8b8;
+    box-shadow: 0 0 0 5px #e8edf2;
+}
+
+.live-status.recording .status-dot {
     background: #3ca36e;
     box-shadow: 0 0 0 5px #d9f0e2;
+}
+
+.replay-controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.replay-control-button {
+    min-height: 36px;
+    padding: 7px 13px;
+    cursor: pointer;
+    border: 1px solid #ccd7e4;
+    border-radius: 6px;
+    background: #fff;
+    color: #3f536b;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.replay-control-button:hover {
+    border-color: #315f94;
+    color: #285987;
+}
+
+.replay-control-button.stop {
+    border-color: #d8a6a6;
+    color: #a13f3f;
+}
+
+.replay-control-button.stop:hover {
+    border-color: #b54747;
+    color: #8f3030;
 }
 
 .summary-grid {
@@ -660,6 +702,11 @@ pre {
     .test-panel {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .replay-controls {
+        align-items: flex-start;
+        flex-wrap: wrap;
     }
 
     .source-map-tool,

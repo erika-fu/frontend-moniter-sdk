@@ -42,6 +42,24 @@ watch(
         }
     },
 );
+
+watch(
+    replaySessions,
+    (sessions) => {
+        if (
+            selectedId.value &&
+            sessions.some((session) => session.id === selectedId.value)
+        ) {
+            return;
+        }
+
+        const firstSession = sessions[0];
+        if (firstSession) {
+            selectSession(firstSession.id);
+        }
+    },
+    { immediate: true },
+);
 </script>
 
 <template>
@@ -87,7 +105,7 @@ watch(
                     <span>{{ selectedSession.events.length }} 个事件</span>
                 </div>
                 <ReplayPlayer
-                    :key="selectedSession.id"
+                    :key="`${selectedSession.id}-${selectedSession.events.length}`"
                     :events="selectedSession.events"
                     v-bind="
                         initialOffset === undefined

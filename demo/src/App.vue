@@ -1,6 +1,14 @@
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
 import { RouterLink, RouterView } from "vue-router";
 import SourceMapUploader from "./components/SourceMapUploader.vue";
+import {
+    isReplayRecording,
+    startReplayRecording,
+    stopReplayRecording,
+} from "./replayControl";
+
+onBeforeUnmount(stopReplayRecording);
 </script>
 
 <template>
@@ -10,9 +18,33 @@ import SourceMapUploader from "./components/SourceMapUploader.vue";
                 <span class="eyebrow">FRONTEND MONITOR SDK</span>
                 <strong>前端监控实验台</strong>
             </RouterLink>
-            <div class="live-status" aria-label="监听状态">
-                <span class="status-dot"></span>
-                <span>正在监听</span>
+            <div class="replay-controls" aria-label="录屏控制">
+                <span
+                    class="live-status"
+                    :class="{ recording: isReplayRecording }"
+                    aria-live="polite"
+                >
+                    <span class="status-dot"></span>
+                    <span>
+                        {{ isReplayRecording ? "录制中" : "未录制" }}
+                    </span>
+                </span>
+                <button
+                    v-if="!isReplayRecording"
+                    class="replay-control-button start"
+                    type="button"
+                    @click="startReplayRecording"
+                >
+                    开启录制
+                </button>
+                <button
+                    v-else
+                    class="replay-control-button stop"
+                    type="button"
+                    @click="stopReplayRecording"
+                >
+                    停止录制
+                </button>
             </div>
         </header>
 
