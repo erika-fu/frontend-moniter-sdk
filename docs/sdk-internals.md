@@ -1,10 +1,12 @@
 # SDK 公共入口与内部链路
 
-本文覆盖 performance、behavior、error 之外的公共代码：入口、配置、统一分发、缓存、传输和事件路径。
+本文覆盖各监控模块之外的公共代码：入口、配置、统一分发、缓存、传输，以及错误与录屏的关联链路。
 
 ## 1. 入口
 
-`src/index.ts` 导出 `SDK_NAME`、`init`、`subscribe`、三类模块入口、细粒度观察器、框架错误入口和 report 工具。默认对象的 `performance`、`behavior`、`error` 分别是三个总入口的别名。
+`src/index.ts` 导出 `SDK_NAME`、`init`、`subscribe`、performance/behavior/error/replay 模块入口、细粒度观察器、框架错误入口和 report 工具。
+
+默认对象提供 `performance`、`behavior`、`error`、`replay` 四个启动入口，并公开 `createReplayUrl`、`getReplaySession`、`stopObserveReplay`。为了兼容需要显式命名的调用方式，默认对象还提供 `observePerformance`、`observeBehavior`、`observeError`、`observeReplay`；更细的观察器继续通过包根命名导出。
 
 `SDKOptions` 等于 `ReportConfigOptions`。`init(options = {})` 只调用 `setConfig`，不会安装监听器；启动模块时才检查浏览器能力，因此初始化本身可以在 SSR 代码中执行。
 
@@ -31,12 +33,13 @@
   projectName: "",
   appId: "",
   userId: "",
+  release: "",
   isImageUpload: false,
   batchSize: 5
 }
 ```
 
-`setConfig` 只修改非 `undefined` 字段；`getReportConfig` 返回浅副本；`resetReportConfig` 恢复默认值。配置是页面/模块级状态，不是每条报告独立配置。
+`setConfig` 只修改非 `undefined` 字段；`getReportConfig` 返回浅副本；`resetReportConfig` 恢复默认值。`release` 会附加到有堆栈意义的 JavaScript、Promise、Vue 和 React 错误，用于服务端选择 SourceMap，不属于 envelope 字段。配置是页面/模块级状态，不是每条报告独立配置。
 
 ## 4. 缓存和订阅
 
@@ -58,14 +61,21 @@
 
 `createEnvelope` 生成 `{ id, projectName, appId, userId, data }`。SDK 在模块加载时捕获原始 XHR `open/send`，避免启用 XHR 监控后把 SDK 自己的上传请求再次采集。
 
-## 6. 事件路径
+## 6. 错误与录屏
+
+录屏运行时，错误模块先调用 `getReplayErrorContext()`，把 `sessionId`、`replayId` 和 `replayOffset` 写入错误报告，再调用 `flushReplayOnError(context)`。错误报告立即分发；录屏片段默认等待 2 秒尾段后分发，并强制尝试 flush 报告缓存。
+
+`sessionId` 标识一次页面录制生命周期，`replayId` 标识一次可独立播放的错误片段。片段冲刷后保留 `sessionId`，生成新的 `replayId` 和 DOM snapshot；显式停止录屏后两个 ID 都结束。
+
+## 7. 事件路径
 
 `getSerializableEventPath` 优先 `event.composedPath()`，旧环境回退 `event.path`，将 Window、Document、tagName、nodeName 或构造器名称转换为 `string[]`。不保存 DOM 对象是为了避免循环引用和不可序列化。
 
-## 7. 边界规则
+## 8. 边界规则
 
 - SSR/Node 缺少浏览器对象时观察器直接跳过；
 - 回调、订阅和传输异常不会传播到页面；
 - 网络失败时缓存保留；
+- 停止录屏会取消尚未触发的尾段上报并清空内存事件；
 - stop 函数只恢复仍是 SDK 包装函数的对象，不覆盖其他工具后来做的替换；
 - SDK 不调用 `preventDefault`，不改变业务事件、Promise 或请求结果。

@@ -31,6 +31,7 @@ const VueErrorScenario = defineComponent({
 });
 
 onBeforeUnmount(stopReplayRecording);
+onMounted(startReplayRecording);
 
 function triggerVueError(): void {
     showVueError.value = true;

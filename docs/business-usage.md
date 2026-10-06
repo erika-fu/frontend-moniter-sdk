@@ -22,6 +22,7 @@ monitor.init({
   projectName: "storefront",
   appId: "web",
   userId: "user-1",
+  release: "web@2026.10.06",
   batchSize: 5,
 });
 
@@ -32,6 +33,7 @@ const unsubscribe = monitor.subscribe((data) => {
 monitor.performance();
 monitor.behavior();
 monitor.error();
+monitor.replay();
 ```
 
 错误报告建议在每次构建时配置稳定的 `release`：
@@ -39,7 +41,7 @@ monitor.error();
 ```ts
 monitor.init({
   url: "/reportData",
-  release: "web@2026.10.05",
+  release: "web@2026.10.06",
 });
 ```
 
@@ -55,6 +57,7 @@ monitor.init({
 | `projectName` | `string` | `""` | 项目标识，放入 envelope |
 | `appId` | `string` | `""` | 应用/端标识 |
 | `userId` | `string` | `""` | 业务用户标识；SDK 不生成、不校验 |
+| `release` | `string` | `""` | 发布版本；附加到 JavaScript、Promise、Vue 和 React 错误 |
 | `isImageUpload` | `boolean` | `false` | true 用 Image GET 查询参数发送 |
 | `batchSize` | `number` | `5` | 达到数量时发送；小数向下取整，负数变 0 |
 
@@ -62,8 +65,7 @@ monitor.init({
 
 ## 4. 接收报告
 
-细粒度观察器通过命名导出使用，默认导出的 `monitor` 对象没有
-`observeFetch` 属性。观察器回调只接收对应模块：
+细粒度观察器通过命名导出使用。默认导出的 `monitor` 对象包含四个模块入口、对应的 `observeXxx` 别名和录屏控制，但没有 `observeFetch` 等更细的性能观察器。观察器回调只接收对应模块：
 
 ```ts
 import { observeFetch } from "frontend-moniter-sdk";
@@ -73,17 +75,16 @@ observeFetch((data) => {
 });
 ```
 
-默认导出对象只提供三个总入口：
+默认导出对象的模块入口：
 
 ```ts
 monitor.performance(); // 启动全部性能观察器
 monitor.behavior();    // 启动全部行为观察器
 monitor.error();       // 启动浏览器错误观察器
+monitor.replay();      // 启动 rrweb 录屏，错误发生后上报相关片段
 ```
 
-如果需要单独启动某一个性能观察器，应使用命名导出，例如
-`observeFetch`、`observeXHR`、`observeLCP`。这些细粒度函数的回调只接收
-对应类型的数据。
+默认对象还公开 `observePerformance`、`observeBehavior`、`observeError`、`observeReplay`、`getReplaySession`、`stopObserveReplay` 和 `createReplayUrl`。如果需要单独启动某一个性能观察器，应使用命名导出，例如 `observeFetch`、`observeXHR`、`observeLCP`。这些细粒度函数的回调只接收对应类型的数据。
 
 全局订阅接收全部模块，返回取消函数：
 
@@ -108,7 +109,7 @@ interface ReportEnvelope<T = unknown> {
 }
 ```
 
-`id` 由 SDK 生成。直接调用 `report(data)` 时 `data` 是单条；批处理 flush 时 `data` 是缓存数组，因此服务端应兼容两种形态。各数据字段见 `performance.md`、`behavior.md`、`error.md`。
+`id` 由 SDK 生成。直接调用 `report(data)` 时 `data` 是单条；批处理 flush 时 `data` 是缓存数组，因此服务端应兼容两种形态。各数据字段见 `performance.md`、`behavior.md`、`error.md` 和 `replay.md`。
 
 ## 6. 发送顺序和失败处理
 
@@ -126,7 +127,24 @@ flushReportQueue(); // boolean：发送成功 true，无缓存或失败 false
 
 `clearReportQueue` 目前是 SDK 内部能力，没有从包根公开。业务侧不应直接丢弃缓存。
 
-## 7. Vue 2 接入
+## 7. 会话录屏
+
+录屏需要单独启动，并默认只在发生错误后上报相关片段：
+
+```ts
+monitor.replay({
+  maskAllInputs: true,
+  bufferSize: 100,
+  postErrorDuration: 2000,
+});
+
+const current = monitor.getReplaySession();
+console.log(current?.sessionId, current?.replayId);
+```
+
+运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)。
+
+## 8. Vue 2 接入
 
 在 Vue 2 应用的入口文件中，先初始化 SDK，再安装插件，最后创建 Vue 根实例：
 
@@ -194,7 +212,7 @@ Vue 2 的职责划分：
 - `monitor.performance()`：采集页面指标与 Fetch/XHR；
 - `monitor.behavior()`：采集首次 PV、点击和原生 hash/history 变化。
 
-## 8. Vue 3 接入
+## 9. Vue 3 接入
 
 Vue 3 使用 `createApp`，在 `mount` 前安装 SDK 插件：
 
@@ -252,7 +270,7 @@ monitor.install(app, {
 
 不要同时对同一个 app 调用 `app.use(monitor)` 和 `monitor.install(app, options)` 来表达两套配置。虽然 SDK 不会重复包装，但后一次调用会更新该 app 的 `onReport`；应选择一种方式并在入口执行一次。
 
-## 9. React 接入
+## 10. React 接入
 
 React 没有 Vue 式的全局组件错误插件。浏览器层监控在入口启动，组件渲染树错误通过 Error Boundary 转交给 SDK。
 
@@ -338,7 +356,7 @@ componentDidCatch(error: Error, info: ErrorInfo): void {
 
 Error Boundary 只能捕获 React 支持的组件树错误，不能捕获事件处理器、异步回调、服务端渲染以及 Boundary 自身的错误。`monitor.error()` 会补充浏览器未捕获 JavaScript 和 Promise 错误，但已经被业务 `try/catch` 消化的异常需要业务主动调用自己的上报逻辑。
 
-## 10. Vue Router 和 React Router
+## 11. Vue Router 和 React Router
 
 首次调用 `monitor.behavior()` 会立即生成一条 PV。SDK 能自动观察 `hashchange` 和 `popstate`，但路由库常通过 `history.pushState`/`replaceState` 切换页面，这两个 API 不会自动触发上述事件。
 
@@ -375,7 +393,7 @@ export function RouteMonitor(): null {
 
 React 18 开发模式下，`StrictMode` 可能重复执行 Effect；使用路由钩子记录 PV 时，开发环境需要自行去重。生产构建不受该开发检查机制影响。
 
-## 11. 停止监听
+## 12. 停止监听
 
 普通单页应用通常让 SDK 随页面生命周期持续运行，不需要停止。微前端子应用卸载或测试清理时可以：
 
@@ -384,18 +402,20 @@ import {
   stopObserveBehavior,
   stopObserveError,
   stopObserveFetch,
+  stopObserveReplay,
   stopObserveXHR,
 } from "frontend-moniter-sdk";
 
 stopObserveBehavior();
 stopObserveError();
 stopObserveFetch();
+stopObserveReplay();
 stopObserveXHR();
 unsubscribe();
 ```
 
-FP、FCP、LCP、load 和首轮 resource 属于一次性观察，没有统一的停止入口。
+`stopObserveReplay()` 会取消尚未触发的错误尾段定时器，并清空当前内存录屏。FP、FCP、LCP、load 和首轮 resource 属于一次性观察，没有统一的停止入口。
 
-## 12. 隐私
+## 13. 隐私
 
-click 含目标 HTML，error 可能含 stack，Fetch/XHR 含 URL。业务应在订阅或服务端脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。
+click 含目标 HTML，error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。

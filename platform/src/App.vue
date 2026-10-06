@@ -767,7 +767,7 @@ onUnmounted(() => {
               <span>{{ selectedReplay.session.eventCount }} 个事件 · {{ selectedReplay.session.userId || "匿名用户" }}</span>
             </div>
             <p v-if="selectedReplay.session.status !== 'ready'" class="state state-error">{{ selectedReplay.session.status === "incomplete" ? "该会话缺少完整快照，播放器无法可靠播放。" : "该会话事件数据损坏，无法播放。" }}其他会话查询不受影响。</p>
-            <ReplayPlayer v-else :key="`${selectedReplay.session.replayId}-${selectedReplay.events.length}`" :events="selectedReplay.events.map((item) => item.event)" :initial-offset="replayOffset" />
+            <ReplayPlayer v-else :key="`${selectedReplay.session.replayId}-${selectedReplay.events.length}`" :events="selectedReplay.events.map((item) => item.event)" :duration="selectedReplay.session.duration" :initial-offset="replayOffset" />
           </section>
           <section v-else class="replay-stage state-error">当前回放会话缺失或无法加载。</section>
         </div>

@@ -45,15 +45,19 @@ describe("observeReplay", () => {
 
         observeReplay({ onReport, postErrorDuration: 0 });
         const session = getReplaySession();
-        emit?.({ type: 4, timestamp: 30, data: {} } as eventWithTime);
-        emit?.({ type: 2, timestamp: 40, data: {} } as eventWithTime, true);
-        emit?.({ type: 3, timestamp: 50, data: {} } as eventWithTime);
+        emit?.({ type: 4, timestamp: 30, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 2, timestamp: 40, data: {} } as unknown as eventWithTime, true);
+        emit?.({ type: 3, timestamp: 50, data: {} } as unknown as eventWithTime);
 
         expect(record).toHaveBeenCalledWith(
             expect.objectContaining({
                 maskAllInputs: true,
                 blockClass: "monitor-block",
                 blockSelector: "[data-monitor-mask]",
+                sampling: {
+                    mouseInteraction: true,
+                    mousemove: false,
+                },
             }),
         );
         expect(session).toEqual(
@@ -91,6 +95,62 @@ describe("observeReplay", () => {
         );
     });
 
+    it("waits for the full snapshot when an error happens during rrweb startup", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+        vi.stubGlobal("performance", { now: () => 10 });
+
+        observeReplay({ onReport, postErrorDuration: 0 });
+        const replay = getReplaySession()!;
+        emit?.({ type: 4, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
+
+        flushReplayOnError({
+            replayId: replay.replayId,
+            sessionId: replay.sessionId,
+            replayOffset: 0,
+        });
+
+        expect(onReport).not.toHaveBeenCalled();
+
+        emit?.({ type: 2, timestamp: replay.startedAt + 5, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 25, data: {} } as unknown as eventWithTime);
+        vi.runAllTimers();
+
+        expect(onReport.mock.calls.map(([report]) => report.event.type)).toEqual([4, 2, 3]);
+        expect(onReport.mock.calls.map(([report]) => report.replayOffset)).toEqual([0, 5, 25]);
+    });
+
+    it("keeps waiting when the snapshot misses the post-error window", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+
+        observeReplay({ onReport, postErrorDuration: 10 });
+        const replay = getReplaySession()!;
+        emit?.({ type: 4, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
+        flushReplayOnError();
+        vi.advanceTimersByTime(10);
+
+        expect(onReport).not.toHaveBeenCalled();
+
+        emit?.({ type: 2, timestamp: replay.startedAt + 20, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 30, data: {} } as unknown as eventWithTime);
+        vi.runAllTimers();
+
+        expect(onReport.mock.calls.map(([report]) => report.event.type)).toEqual([4, 2, 3]);
+    });
+
     it("creates a seekable URL from replay error context", () => {
         expect(
             createReplayUrl("/replay", {
@@ -115,7 +175,7 @@ describe("observeReplay", () => {
             bufferSize: 2,
             postErrorDuration: 0,
         });
-        emit?.({ type: 2, timestamp: 100, data: {} } as eventWithTime);
+        emit?.({ type: 2, timestamp: 100, data: {} } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: 101, data: { value: 1 } } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: 102, data: { value: 2 } } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: 103, data: { value: 3 } } as unknown as eventWithTime);
@@ -139,8 +199,8 @@ describe("observeReplay", () => {
 
         observeReplay({ onReport, postErrorDuration: 0 });
         const firstSession = getReplaySession()!;
-        emit?.({ type: 4, timestamp: 20, data: {} } as eventWithTime);
-        emit?.({ type: 2, timestamp: 30, data: {} } as eventWithTime);
+        emit?.({ type: 4, timestamp: 20, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 2, timestamp: 30, data: {} } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: 40, data: {} } as unknown as eventWithTime);
 
         flushReplayOnError();
@@ -156,12 +216,12 @@ describe("observeReplay", () => {
             type: 4,
             timestamp: nextSession.startedAt,
             data: {},
-        } as eventWithTime);
+        } as unknown as eventWithTime);
         emit?.({
             type: 2,
             timestamp: nextSession.startedAt + 1,
             data: {},
-        } as eventWithTime);
+        } as unknown as eventWithTime);
         emit?.({
             type: 3,
             timestamp: nextSession.startedAt + 2,
@@ -193,12 +253,12 @@ describe("observeReplay", () => {
             type: 4,
             timestamp: session.startedAt,
             data: {},
-        } as eventWithTime);
+        } as unknown as eventWithTime);
         emit?.({
             type: 2,
             timestamp: session.startedAt + 10,
             data: {},
-        } as eventWithTime);
+        } as unknown as eventWithTime);
 
         flushReplayOnError({
             replayId: session.id,
@@ -218,6 +278,55 @@ describe("observeReplay", () => {
         expect(
             onReport.mock.calls.map(([report]) => report.replayOffset),
         ).toEqual([0, 10, 1000]);
+    });
+
+    it("preserves pre-error events when the post-error tail is busy", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+
+        observeReplay({ onReport, bufferSize: 2, postErrorDuration: 10 });
+        const replay = getReplaySession()!;
+        emit?.({ type: 2, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 1, data: { value: "before-1" } } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 2, data: { value: "before-2" } } as unknown as eventWithTime);
+        flushReplayOnError();
+        emit?.({ type: 3, timestamp: replay.startedAt + 3, data: { value: "after-1" } } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 4, data: { value: "after-2" } } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt + 5, data: { value: "after-3" } } as unknown as eventWithTime);
+        vi.advanceTimersByTime(10);
+
+        expect(onReport.mock.calls.map(([report]) => report.event.data?.value)).toEqual([
+            undefined, "before-1", "before-2", "after-2", "after-3",
+        ]);
+    });
+
+    it("ignores stale replay contexts and late events from an old recorder", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        const emits: Array<(event: eventWithTime, isCheckout?: boolean) => void> = [];
+        record.mockImplementation((options) => {
+            emits.push(options.emit);
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+
+        observeReplay({ onReport, postErrorDuration: 0 });
+        const first = getReplaySession()!;
+        emits[0]?.({ type: 2, timestamp: first.startedAt, data: {} } as unknown as eventWithTime);
+        const context = { replayId: first.replayId, sessionId: first.sessionId, replayOffset: 0 };
+        flushReplayOnError(context);
+        const second = getReplaySession()!;
+        emits[1]?.({ type: 2, timestamp: second.startedAt, data: {} } as unknown as eventWithTime);
+        emits[0]?.({ type: 3, timestamp: first.startedAt + 1, data: { value: "stale" } } as unknown as eventWithTime);
+        flushReplayOnError(context);
+        expect(getReplaySession()?.replayId).toBe(second.replayId);
+        expect(onReport.mock.calls.map(([report]) => report.event.data?.value)).not.toContain("stale");
     });
 
     it("updates the callback without starting another session", () => {

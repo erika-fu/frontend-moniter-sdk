@@ -88,7 +88,7 @@ describe("persistent replay API", () => {
                     replayId: "replay-1",
                     replayOffset: 250,
                 },
-            ])),
+            ], { timestamp: 1_700_000_001_000 })),
         });
 
         expect(response.status).toBe(202);
@@ -101,6 +101,8 @@ describe("persistent replay API", () => {
                 replayId: "replay-1",
                 eventCount: 2,
                 errorCount: 1,
+                startedAt: 1_700_000_000_000,
+                lastSeen: 1_700_000_000_250,
                 duration: 250,
                 status: "ready",
             }],

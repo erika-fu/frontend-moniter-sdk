@@ -3,9 +3,11 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import rrwebPlayer from "rrweb-player";
 import "rrweb-player/dist/style.css";
 import type { eventWithTime } from "@rrweb/types";
+import { formatReplayDuration } from "./replayDuration";
 
 const props = defineProps<{
   events: eventWithTime[];
+  duration: number;
   initialOffset?: number;
 }>();
 
@@ -65,6 +67,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="playerError" class="replay-player replay-player-error">{{ playerError }}</div>
-  <div v-else ref="target" class="replay-player" aria-label="录屏播放器"></div>
+  <div class="replay-player-shell">
+    <div class="replay-player-meta" role="status">
+      <strong>回放时长：{{ formatReplayDuration(props.duration) }}</strong>
+      <span>播放器底部控制条按整秒显示，短回放以此处精确时长为准。</span>
+    </div>
+    <div v-if="playerError" class="replay-player replay-player-error">{{ playerError }}</div>
+    <div v-else ref="target" class="replay-player" aria-label="录屏播放器"></div>
+  </div>
 </template>

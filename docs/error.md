@@ -26,10 +26,15 @@ interface ResourceErrorReportData {
   html: string;
   pageUrl: string;
   paths?: string[]; // 不支持 composedPath/path 时不提供
+  replayId?: string;
+  sessionId?: string;
+  replayOffset?: number;
 }
 ```
 
 `paths` 是节点名称而不是 DOM 对象，例如 `["SCRIPT", "BODY", "HTML", "Document", "Window"]`，避免循环引用。普通资源事件通常不给 HTTP 状态码，所以报告也不包含响应状态。
+
+录屏运行时，所有浏览器和框架错误类型还会带上可选的 `replayId`、`sessionId` 和 `replayOffset`。错误先上报，关联的回放片段默认继续录制 2 秒后再上报；详见 [Replay 会话录屏](replay.md)。
 
 ## 3. JavaScript 异常
 
@@ -44,8 +49,12 @@ interface JavaScriptErrorReportData {
   lineNo: number | undefined;
   columnNo: number | undefined;
   stack?: string;
+  release?: string;
   pageUrl: string;
   startTime: number; // performance.now()
+  replayId?: string;
+  sessionId?: string;
+  replayOffset?: number;
 }
 ```
 
@@ -64,6 +73,9 @@ interface PromiseErrorReportData {
   reason: string;
   stack?: string;
   release?: string;
+  replayId?: string;
+  sessionId?: string;
+  replayOffset?: number;
   pageUrl: string;
   startTime: number; // event.timeStamp
 }
@@ -90,25 +102,13 @@ interface VueErrorReportData {
   startTime: number;
   stack?: string;
   release?: string;
+  replayId?: string;
+  sessionId?: string;
+  replayOffset?: number;
 }
 ```
 
-`options.onReport` 是该 app 的回调；没有它时使用 SDK 入口配置的框架回调。同一个 app 重复安装只更新回调，不重复包装，不同 app 独立保存状态。
-
-## 7. 服务端堆栈还原
-
-仓库提供的 `createReportServer` 在接收报告后使用 `error-stack-parser` 生成 `stackFrames`，再使用 `source-map-js` 查询 SourceMap，并把结果保存为 `sourceStack`。SourceMap 存储可按 release 定制：
-
-```ts
-createReportServer({
-  stackResolution: {
-    sourceMapUrl: (fileUrl, release) =>
-      `https://maps.example.com/${release}/${encodeURIComponent(fileUrl)}.map`,
-  },
-});
-```
-
-SourceMap 不可用时保留原始 `stack` 和解析出的构建后位置，不阻断错误报告接收。
+`options.onReport` 是该 app 的额外回调；不传时，报告仍进入自动网络上报和全局 `subscribe`。同一个 app 重复安装只更新回调，不重复包装，不同 app 独立保存状态。
 
 ## 6. React Error Boundary
 
@@ -130,5 +130,25 @@ interface ReactErrorReportData {
   info: unknown;
   pageUrl: string;
   startTime: number;
+  stack?: string;
+  release?: string;
+  replayId?: string;
+  sessionId?: string;
+  replayOffset?: number;
 }
 ```
+
+## 7. 服务端堆栈还原
+
+仓库提供的 `createReportServer` 在接收批量报告后使用 `error-stack-parser` 生成 `stackFrames`，再使用 `source-map-js` 查询 SourceMap，并把结果保存为 `sourceStack`。SourceMap 存储可按 release 定制：
+
+```ts
+createReportServer({
+  stackResolution: {
+    sourceMapUrl: (fileUrl, release) =>
+      `https://maps.example.com/${release}/${encodeURIComponent(fileUrl)}.map`,
+  },
+});
+```
+
+`sourceMapUrl` 对每个包含文件名、行号和列号的 stack frame 调用。SourceMap 不可用或解析失败时，服务端保留原始 `stack` 和构建后位置，不阻断报告接收。

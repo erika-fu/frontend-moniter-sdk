@@ -498,6 +498,7 @@ export class SQLiteReportStore {
                 );
                 const replay = replayData(data);
                 if (replay) {
+                    const eventTimestamp = Number(replay.event.timestamp);
                     this.database.prepare(`
                         INSERT OR IGNORE INTO replay_sessions
                         (app_id, replay_id, session_id, project_name, user_id, page_url, started_at, last_seen)
@@ -509,8 +510,8 @@ export class SQLiteReportStore {
                         projectName,
                         userId,
                         pageUrl,
-                        timestamp - replay.replayOffset,
-                        timestamp,
+                        eventTimestamp - replay.replayOffset,
+                        eventTimestamp,
                     );
                     const replayEvent = this.database.prepare(`
                         INSERT OR IGNORE INTO replay_events
@@ -534,7 +535,7 @@ export class SQLiteReportStore {
                                 has_snapshot = MAX(has_snapshot, ?)
                             WHERE app_id = ? AND replay_id = ?
                         `).run(
-                            timestamp,
+                            eventTimestamp,
                             replay.replayOffset,
                             Buffer.byteLength(json(replay.event), "utf8"),
                             replay.event.type === 2 ? 1 : 0,
