@@ -20,6 +20,16 @@ interface Overview {
   summary: { total: number; byType: Array<{ type: string; count: number }> };
   events: { items: EventItem[]; total: number; page: number; pageSize: number };
 }
+interface ResolvedFrame {
+  functionName?: string;
+  fileName?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+  originalFileName?: string;
+  originalLineNumber?: number;
+  originalColumnNumber?: number;
+  sourceContext?: Array<{ lineNumber: number; content: string }>;
+}
 interface ErrorIssue {
   fingerprint: string;
   appId: string;
@@ -33,6 +43,14 @@ interface ErrorIssue {
   userCount: number;
   pages: string[];
   releases: string[];
+  rawStack: string;
+  stackFrames: ResolvedFrame[];
+  resolutionStatus:
+    | "resolved"
+    | "version_not_found"
+    | "file_not_found"
+    | "parse_failed"
+    | "unmapped";
 }
 interface ErrorResult {
   items: ErrorIssue[];
@@ -44,6 +62,12 @@ interface ErrorDetail {
   issue: ErrorIssue;
   events: { items: EventItem[]; total: number; page: number; pageSize: number };
 }
+interface SourceMapRecord {
+  appId: string;
+  release: string;
+  generatedFile: string;
+}
+type SourceMapUploadState = "idle" | "uploading" | "success" | "error";
 
 const apiUrl = import.meta.env.VITE_SERVER_URL ?? "http://localhost:9800";
 const apps = ref<AppInfo[]>([]);
@@ -51,7 +75,16 @@ const selectedAppId = ref("");
 const from = ref("");
 const to = ref("");
 const selectedType = ref("");
-const view = ref<"overview" | "errors">("overview");
+const view = ref<"overview" | "errors" | "sourceMaps">("overview");
+const sourceMapRelease = ref("");
+const sourceMapGeneratedFile = ref("");
+const sourceMaps = ref<SourceMapRecord[]>([]);
+const sourceMapFile = ref<File | null>(null);
+const sourceMapInput = ref<HTMLInputElement | null>(null);
+const sourceMapUploadState = ref<SourceMapUploadState>("idle");
+const sourceMapMessage = ref("");
+const sourceMapLoading = ref(false);
+const sourceMapLoaded = ref(false);
 const errorStatus = ref("");
 const errorSubType = ref("");
 const errorSearch = ref("");
@@ -95,6 +128,41 @@ function errorQueryString(): string {
   return params.toString();
 }
 
+function sourceMapQueryString(): string {
+  const params = new URLSearchParams();
+  if (selectedAppId.value) params.set("appId", selectedAppId.value);
+  if (sourceMapRelease.value.trim()) {
+    params.set("release", sourceMapRelease.value.trim());
+  }
+  return params.toString();
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function resolutionLabel(status: ErrorIssue["resolutionStatus"]): string {
+  return {
+    resolved: "已还原",
+    version_not_found: "未找到对应版本",
+    file_not_found: "未找到对应生成文件",
+    parse_failed: "Source Map 解析失败",
+    unmapped: "文件存在但位置未映射",
+  }[status];
+}
+
+function resolutionReason(status: ErrorIssue["resolutionStatus"]): string {
+  return {
+    resolved: "服务端已按错误事件的应用、发布版本和生成文件完成还原。",
+    version_not_found: "这个错误事件的发布版本还没有保存 Source Map。请上传该版本的 map 文件。",
+    file_not_found: "该版本已有 Source Map，但没有匹配堆栈中生成文件的文件名。请确认 generated file 填写正确。",
+    parse_failed: "匹配的 Source Map 无法解析。请检查文件格式后重新上传，或替换当前文件。",
+    unmapped: "Source Map 文件匹配成功，但该行列没有对应的源码映射。请确认构建产物和 map 来自同一版本。",
+  }[status];
+}
+
 async function loadApps(): Promise<void> {
   const response = await fetch(`${apiUrl}/api/v1/apps`);
   if (!response.ok) throw new Error("应用列表加载失败");
@@ -131,6 +199,80 @@ async function loadErrors(): Promise<void> {
     errorLoading.value = false;
     loading.value = false;
   }
+}
+
+async function loadSourceMaps(): Promise<void> {
+  sourceMapLoading.value = true;
+  sourceMapMessage.value = "";
+  try {
+    const response = await fetch(`${apiUrl}/api/v1/source-maps?${sourceMapQueryString()}`);
+    if (!response.ok) throw new Error("Source Map 列表加载失败");
+    sourceMaps.value = (await response.json()) as SourceMapRecord[];
+    sourceMapLoaded.value = true;
+  } catch (cause) {
+    sourceMapMessage.value = cause instanceof Error ? cause.message : "Source Map 列表加载失败";
+    sourceMapLoaded.value = false;
+  } finally {
+    sourceMapLoading.value = false;
+  }
+}
+
+function selectSourceMapFile(event: Event): void {
+  sourceMapFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+  sourceMapGeneratedFile.value = sourceMapFile.value?.name.replace(/\.map$/, "") ?? "";
+  sourceMapUploadState.value = "idle";
+  sourceMapMessage.value = "";
+}
+
+async function uploadSourceMap(replace = false): Promise<void> {
+  if (!selectedAppId.value || !sourceMapRelease.value.trim() ||
+    !sourceMapGeneratedFile.value.trim() || !sourceMapFile.value) {
+    sourceMapUploadState.value = "error";
+    sourceMapMessage.value = "请选择应用、填写发布版本和对应生成文件，并选择 Source Map 文件。";
+    return;
+  }
+  sourceMapUploadState.value = "uploading";
+  sourceMapMessage.value = "";
+  const form = new FormData();
+  form.set("appId", selectedAppId.value);
+  form.set("release", sourceMapRelease.value.trim());
+  form.set("generatedFile", sourceMapGeneratedFile.value.trim());
+  form.set("sourceMap", sourceMapFile.value);
+  if (replace) form.set("replace", "true");
+  try {
+    const response = await fetch(`${apiUrl}/api/v1/source-maps`, {
+      method: "POST",
+      body: form,
+    });
+    const body = (await response.json()) as { message?: string; status?: "created" | "replaced" };
+    if (response.status === 409) {
+      const confirmed = window.confirm(
+        `${sourceMapFile.value.name} 已存在于 ${sourceMapRelease.value.trim()}。确认替换已保存文件吗？`,
+      );
+      if (confirmed) {
+        await uploadSourceMap(true);
+        return;
+      }
+      sourceMapUploadState.value = "idle";
+      sourceMapMessage.value = "已取消替换，原文件未变更。";
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(body.message ?? "Source Map 上传失败");
+    }
+    sourceMapUploadState.value = "success";
+    sourceMapMessage.value = body.status === "replaced" ? "Source Map 已替换。" : "Source Map 上传成功。";
+    await loadSourceMaps();
+  } catch (cause) {
+    sourceMapUploadState.value = "error";
+    sourceMapMessage.value = cause instanceof Error ? cause.message : "Source Map 上传失败";
+  }
+}
+
+function openSourceMapManager(issue?: ErrorIssue): void {
+  view.value = "sourceMaps";
+  if (issue?.releases[0]) sourceMapRelease.value = issue.releases[0];
+  void loadSourceMaps();
 }
 
 async function openError(issue: ErrorIssue): Promise<void> {
@@ -174,11 +316,15 @@ watch([selectedAppId, from, to, selectedType], () => {
 watch([selectedAppId, from, to, errorStatus, errorSubType, errorSearch, errorPage], () => {
   if (apps.value.length > 0 && view.value === "errors") void loadErrors();
 });
+watch([selectedAppId, sourceMapRelease], () => {
+  if (view.value === "sourceMaps" && apps.value.length > 0) void loadSourceMaps();
+});
 
 onMounted(() => {
   void initialize();
   refreshTimer = window.setInterval(() => {
     if (view.value === "errors") void loadErrors();
+    else if (view.value === "sourceMaps") void loadSourceMaps();
     else void loadOverview();
   }, 30_000);
 });
@@ -195,7 +341,7 @@ onUnmounted(() => {
         <h1>监控总览</h1>
         <p class="subtitle">{{ selectedApp?.projectName || "选择一个应用查看上报事件" }}</p>
       </div>
-      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : loadOverview(true)">
+      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
         <span aria-hidden="true">↻</span> 刷新事件
       </button>
     </header>
@@ -203,6 +349,7 @@ onUnmounted(() => {
     <nav class="view-tabs" aria-label="监控模块">
       <button type="button" :class="{ active: view === 'overview' }" @click="view = 'overview'; void loadOverview()">总览</button>
       <button type="button" :class="{ active: view === 'errors' }" @click="view = 'errors'; void loadErrors()">错误事项</button>
+      <button type="button" :class="{ active: view === 'sourceMaps' }" @click="view = 'sourceMaps'; void loadSourceMaps()">Source Map</button>
     </nav>
 
     <section class="filters" aria-label="查询筛选">
@@ -303,12 +450,76 @@ onUnmounted(() => {
           <button type="button" :class="{ selected: selectedError.issue.status === 'ignored' }" @click="setErrorStatus('ignored')">已忽略</button>
         </div>
         <p class="detail-meta">{{ selectedError.issue.subType }} · {{ selectedError.issue.count }} 次 · {{ selectedError.issue.userCount }} 位用户 · {{ formatTime(selectedError.issue.firstSeen) }} 至 {{ formatTime(selectedError.issue.lastSeen) }}</p>
-        <pre class="stack">{{ selectedError.issue.stack || "无有效堆栈" }}</pre>
+        <section class="resolution-panel" :class="{ 'resolution-success': selectedError.issue.resolutionStatus === 'resolved' }">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Source Map resolution</p>
+              <h3>{{ resolutionLabel(selectedError.issue.resolutionStatus) }}</h3>
+            </div>
+            <button v-if="selectedError.issue.resolutionStatus !== 'resolved'" type="button" class="text-button" @click="openSourceMapManager(selectedError.issue)">
+              管理该版本 Source Map
+            </button>
+          </div>
+          <p class="resolution-reason">{{ resolutionReason(selectedError.issue.resolutionStatus) }}</p>
+          <div v-if="selectedError.issue.stackFrames.length" class="frame-list">
+            <article v-for="(frame, index) in selectedError.issue.stackFrames" :key="`${index}-${String(frame.fileName)}`" class="frame">
+              <strong>{{ frame.functionName || "(匿名函数)" }}</strong>
+              <code>{{ frame.originalFileName || frame.fileName }}:{{ frame.originalLineNumber || frame.lineNumber }}:{{ frame.originalColumnNumber || frame.columnNumber }}</code>
+              <small v-if="frame.originalFileName">生成文件：{{ frame.fileName }}:{{ frame.lineNumber }}:{{ frame.columnNumber }}</small>
+              <pre v-if="frame.sourceContext?.length" class="source-context"><span v-for="line in frame.sourceContext" :key="line.lineNumber" :class="{ 'source-context-line': line.lineNumber === frame.originalLineNumber }">{{ line.lineNumber }} | {{ line.content }}
+</span></pre>
+            </article>
+          </div>
+        </section>
+        <details class="raw-stack">
+          <summary>查看原始堆栈</summary>
+          <pre class="stack">{{ selectedError.issue.rawStack || selectedError.issue.stack || "无有效堆栈" }}</pre>
+        </details>
         <h3>发生记录</h3>
         <div class="table-wrap"><table><thead><tr><th>时间</th><th>页面</th><th>用户</th><th>版本</th><th>原始上报</th></tr></thead><tbody>
           <tr v-for="event in selectedError.events.items" :key="event.id"><td>{{ formatTime(event.timestamp) }}</td><td>{{ event.pageUrl || "-" }}</td><td>{{ event.userId || "-" }}</td><td>{{ event.release || "-" }}</td><td><code>{{ JSON.stringify(event.raw) }}</code></td></tr>
         </tbody></table></div>
       </aside>
+    </template>
+    <template v-else-if="view === 'sourceMaps'">
+      <section class="source-map-section" aria-labelledby="source-maps-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">Release artifacts</p><h2 id="source-maps-title">Source Map 管理</h2></div>
+          <span class="result-count">{{ sourceMaps.length }} 个文件</span>
+        </div>
+        <div class="source-map-target">
+          <p>当前目标</p>
+          <strong>{{ selectedApp?.projectName || "未选择应用" }}</strong>
+          <code>{{ selectedAppId || "请先选择应用" }}</code>
+        </div>
+        <form class="source-map-upload" @submit.prevent="uploadSourceMap()">
+          <label>发布版本
+            <input v-model="sourceMapRelease" required placeholder="例如 web@1.4.0">
+          </label>
+          <label>Source Map 文件
+            <input ref="sourceMapInput" type="file" accept=".map,application/json" required @change="selectSourceMapFile">
+          </label>
+          <label>对应生成文件
+            <input v-model="sourceMapGeneratedFile" required placeholder="例如 assets/app.js">
+          </label>
+          <div v-if="sourceMapFile" class="file-summary">
+            <strong>{{ sourceMapFile.name }}</strong><span>{{ formatFileSize(sourceMapFile.size) }}</span>
+          </div>
+          <button class="primary-button" type="submit" :disabled="sourceMapUploadState === 'uploading'">
+            {{ sourceMapUploadState === "uploading" ? "上传中..." : "上传 Source Map" }}
+          </button>
+        </form>
+        <p v-if="sourceMapMessage" :class="['source-map-message', `message-${sourceMapUploadState}`]" role="status">{{ sourceMapMessage }}</p>
+        <p v-if="sourceMapLoading" class="state">正在加载已保存的 Source Map...</p>
+        <p v-else-if="sourceMapLoaded && sourceMaps.length === 0" class="state">该应用版本还没有保存 Source Map。上传与生成文件同名的 map 后，错误详情会自动使用它。</p>
+        <div v-else-if="sourceMaps.length" class="table-wrap">
+          <table class="source-map-table"><thead><tr><th>应用</th><th>发布版本</th><th>生成文件</th></tr></thead><tbody>
+            <tr v-for="map in sourceMaps" :key="`${map.appId}-${map.release}-${map.generatedFile}`">
+              <td>{{ map.appId }}</td><td>{{ map.release }}</td><td><code>{{ map.generatedFile }}</code></td>
+            </tr>
+          </tbody></table>
+        </div>
+      </section>
     </template>
     <p v-else class="state">暂无可用的监控数据</p>
     <p v-if="refreshingEvents" class="refresh-note">正在更新事件列表...</p>

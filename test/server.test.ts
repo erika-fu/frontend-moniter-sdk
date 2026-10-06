@@ -321,7 +321,10 @@ describe("report server", () => {
             appId: "maps-app",
             release: "1.0.0",
             generatedFile: "app.js",
-            sourceMap: sourceMap(),
+            sourceMap: {
+                ...sourceMap(),
+                sourcesContent: ["throw new Error('mapped');\nreturn 1;"],
+            },
         });
         expect(upload.status).toBe(201);
         expect(await upload.json()).toMatchObject({ status: "created" });
@@ -335,6 +338,10 @@ describe("report server", () => {
                 originalFileName: "src/demo.ts",
                 originalLineNumber: 1,
                 originalColumnNumber: 1,
+                sourceContext: [
+                    { lineNumber: 1, content: "throw new Error('mapped');" },
+                    { lineNumber: 2, content: "return 1;" },
+                ],
             }],
             rawStack: expect.stringContaining("http://cdn.test/app.js"),
         });

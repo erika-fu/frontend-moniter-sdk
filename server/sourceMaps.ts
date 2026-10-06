@@ -37,6 +37,22 @@ function sameGeneratedFile(left: string, right: string): boolean {
         normalizedRight.endsWith(`/${normalizedLeft}`);
 }
 
+function sourceContext(
+    consumer: SourceMapConsumer,
+    source: string,
+    line: number,
+): Array<{ lineNumber: number; content: string }> | undefined {
+    const content = consumer.sourceContentFor(source, true);
+    if (typeof content !== "string") return undefined;
+    const lines = content.split(/\r?\n/);
+    const start = Math.max(1, line - 2);
+    const end = Math.min(lines.length, line + 2);
+    return lines.slice(start - 1, end).map((value, index) => ({
+        lineNumber: start + index,
+        content: value,
+    }));
+}
+
 export function isSourceMap(value: unknown): value is {
     version: number;
     sources: unknown[];
@@ -137,11 +153,13 @@ export function resolveStack(
                 return frame;
             }
             foundMapping = true;
+            const context = sourceContext(consumer, original.source, original.line);
             return {
                 ...frame,
                 originalFileName: original.source,
                 originalLineNumber: original.line,
                 originalColumnNumber: original.column + 1,
+                ...(context ? { sourceContext: context } : {}),
             };
         } catch {
             parseFailed = true;
