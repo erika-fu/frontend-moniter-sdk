@@ -7,6 +7,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 import { SQLiteReportStore } from "./store.js";
+import type { ErrorStatus } from "./errorIssues.js";
 
 export interface ReportServerOptions {
     logger?: ((report: unknown) => void) | undefined;
@@ -40,7 +41,7 @@ export class InMemoryReportStore implements ReportStore {
 
 const CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 };
 
@@ -260,8 +261,40 @@ export function createReportServer(
                     url.searchParams.get("eventType") ??
                     undefined,
             };
+            const errorQuery = {
+                ...query,
+                subType: url.searchParams.get("subType") ?? undefined,
+                status: (url.searchParams.get("status") ?? undefined) as ErrorStatus | undefined,
+                search: url.searchParams.get("search") ??
+                    url.searchParams.get("keyword") ?? undefined,
+                sort: (url.searchParams.get("sort") ?? undefined) as
+                    "lastSeen" | "firstSeen" | "count" | undefined,
+            };
             if (url.pathname === "/api/v1/apps") {
                 sendJson(response, 200, store.apps());
+                return;
+            }
+            if (url.pathname === "/api/v1/errors") {
+                sendJson(response, 200, store.queryErrors({
+                    ...errorQuery,
+                    page,
+                    pageSize,
+                }));
+                return;
+            }
+            if (url.pathname.startsWith("/api/v1/errors/")) {
+                const fingerprint = decodeURIComponent(
+                    url.pathname.slice("/api/v1/errors/".length),
+                );
+                const issue = store.getError(fingerprint);
+                if (!issue) {
+                    send(response, 404, "Not Found");
+                    return;
+                }
+                sendJson(response, 200, {
+                    issue,
+                    events: store.errorEvents(fingerprint, page, pageSize),
+                });
                 return;
             }
             if (
@@ -277,6 +310,32 @@ export function createReportServer(
                 });
                 return;
             }
+        }
+
+        if (
+            request.method === "PATCH" &&
+            store instanceof SQLiteReportStore &&
+            url.pathname.startsWith("/api/v1/errors/")
+        ) {
+            const fingerprint = decodeURIComponent(
+                url.pathname.slice("/api/v1/errors/".length),
+            );
+            const body = await readRequestBody(request);
+            const status = isRecord(body) ? body.status : undefined;
+            if (
+                status !== "unresolved" &&
+                status !== "resolved" &&
+                status !== "ignored"
+            ) {
+                sendBadRequest(response, "status must be unresolved, resolved, or ignored.");
+                return;
+            }
+            if (!store.updateErrorStatus(fingerprint, status)) {
+                send(response, 404, "Not Found");
+                return;
+            }
+            sendJson(response, 200, { status });
+            return;
         }
 
         const isVersionedReportEndpoint =
