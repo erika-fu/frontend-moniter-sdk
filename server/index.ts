@@ -6,11 +6,13 @@ import {
 } from "node:http";
 import { pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
+import { SQLiteReportStore } from "./store.js";
 
 export interface ReportServerOptions {
     logger?: ((report: unknown) => void) | undefined;
     stackResolution?: StackResolutionOptions | undefined;
     store?: ReportStore | undefined;
+    databasePath?: string | undefined;
 }
 
 export interface ReportStore {
@@ -209,7 +211,14 @@ export function createReportServer(
     options: ReportServerOptions = {},
 ): Server {
     const logger = options.logger ?? console.log;
-    const store = options.store ?? new InMemoryReportStore();
+    const store = options.store ??
+        (options.databasePath || process.env.REPORT_DB_PATH
+            ? new SQLiteReportStore(
+                  options.databasePath ??
+                      process.env.REPORT_DB_PATH ??
+                      "",
+              )
+            : new InMemoryReportStore());
     const stackResolution = options.stackResolution ?? {};
 
     return createServer(async (request, response) => {
@@ -228,6 +237,46 @@ export function createReportServer(
             const body: HealthResponse = { status: "ok", apiVersion: "v1" };
             sendJson(response, 200, body);
             return;
+        }
+
+        if (request.method === "GET" && store instanceof SQLiteReportStore) {
+            const parseNumber = (key: string): number | undefined => {
+                const value = url.searchParams.get(key);
+                if (value === null || value === "") return undefined;
+                const number = Number(value);
+                return Number.isFinite(number) ? number : undefined;
+            };
+            const page = Math.max(1, Math.floor(parseNumber("page") ?? 1));
+            const pageSize = Math.min(
+                100,
+                Math.max(1, Math.floor(parseNumber("pageSize") ?? 25)),
+            );
+            const query = {
+                appId: url.searchParams.get("appId") ?? undefined,
+                from: parseNumber("from") ?? parseNumber("startTime"),
+                to: parseNumber("to") ?? parseNumber("endTime"),
+                type:
+                    url.searchParams.get("type") ??
+                    url.searchParams.get("eventType") ??
+                    undefined,
+            };
+            if (url.pathname === "/api/v1/apps") {
+                sendJson(response, 200, store.apps());
+                return;
+            }
+            if (
+                url.pathname === "/api/v1/events" ||
+                url.pathname === "/api/v1/overview" ||
+                (url.pathname === "/api/v1/reports" &&
+                    [...url.searchParams.keys()].length > 0)
+            ) {
+                const events = store.queryEvents({ ...query, page, pageSize });
+                sendJson(response, 200, {
+                    summary: store.summary(query),
+                    events,
+                });
+                return;
+            }
         }
 
         const isVersionedReportEndpoint =
@@ -305,6 +354,9 @@ if (
 ) {
     const port = Number.parseInt(process.env.PORT ?? "9800", 10);
     const server = createReportServer({
+        databasePath:
+            process.env.REPORT_DB_PATH ??
+            new URL("./data/monitoring.sqlite", import.meta.url).pathname,
         stackResolution: {
             sourceMapUrl: (fileUrl) =>
                 fileUrl.startsWith("http://localhost:4173/")

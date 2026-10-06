@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { unlinkSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createReportServer } from "../server/index.js";
 
@@ -24,7 +25,11 @@ afterEach(async () => {
 async function startServer(
     logger = vi.fn(),
     options: Parameters<typeof createReportServer>[0] = {},
-): Promise<{ baseUrl: string; logger: typeof logger }> {
+): Promise<{
+    baseUrl: string;
+    logger: typeof logger;
+    server: ReturnType<typeof createReportServer>;
+}> {
     const server = createReportServer({ ...options, logger });
     servers.push(server);
 
@@ -36,7 +41,17 @@ async function startServer(
     return {
         baseUrl: `http://127.0.0.1:${address.port}`,
         logger,
+        server,
     };
+}
+
+async function stopServer(
+    server: ReturnType<typeof createReportServer>,
+): Promise<void> {
+    servers.splice(servers.indexOf(server), 1);
+    await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+    });
 }
 
 describe("report server", () => {
@@ -242,6 +257,43 @@ describe("report server", () => {
             "Content-Type",
         );
         expect(logger).not.toHaveBeenCalled();
+    });
+
+    it("keeps HTTP-ingested history queryable after a server restart", async () => {
+        const databasePath = `/tmp/monitoring-http-${Date.now()}-${Math.random()}.sqlite`;
+        const first = await startServer(vi.fn(), { databasePath });
+        const report = {
+            protocolVersion: 1,
+            id: "restart-id",
+            appId: "restart-app",
+            projectName: "Restart project",
+            sessionId: "session",
+            timestamp: 1000,
+            release: "1.0.0",
+            user: { id: "user" },
+            environment: { url: "/restart", userAgent: "test", language: "zh-CN" },
+            data: [{ type: "error", subType: "js", message: "persisted" }],
+        };
+
+        const ingest = await fetch(`${first.baseUrl}/api/v1/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+        });
+        expect(ingest.status).toBe(202);
+        await stopServer(first.server);
+
+        const second = await startServer(vi.fn(), { databasePath });
+        const query = await fetch(
+            `${second.baseUrl}/api/v1/overview?appId=restart-app`,
+        );
+        expect(query.status).toBe(200);
+        expect(await query.json()).toMatchObject({
+            summary: { total: 1, byType: [{ type: "error", count: 1 }] },
+            events: { total: 1 },
+        });
+        await stopServer(second.server);
+        unlinkSync(databasePath);
     });
 
     it("returns not found outside the report endpoint", async () => {
