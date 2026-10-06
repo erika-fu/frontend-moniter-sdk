@@ -134,7 +134,10 @@ flushReportQueue(); // boolean：发送成功 true，无缓存或失败 false
 ```ts
 monitor.replay({
   maskAllInputs: true,
+  preErrorDuration: 30000,
   bufferSize: 100,
+  maxReplayEvents: 1000,
+  maxReplayBytes: 5 * 1024 * 1024,
   postErrorDuration: 2000,
 });
 
@@ -142,7 +145,7 @@ const current = monitor.getReplaySession();
 console.log(current?.sessionId, current?.replayId);
 ```
 
-运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)。
+运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。`preErrorDuration` 按时间保留错误前真实事件，`postErrorDuration` 只等待并收集错误后真实事件，不会伪造空白操作。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)。
 
 ## 8. Vue 2 接入
 

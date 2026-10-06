@@ -149,6 +149,45 @@ export function dispatchReport<T>(
 }
 
 /**
+ * 将一组相关事件作为一个报告批次发送，避免 replay 片段被普通 batchSize 拆散。
+ */
+const MAX_REPORT_BATCH_BYTES = 512 * 1024;
+
+function serializedBytes(value: unknown): number {
+    const serialized = JSON.stringify(value);
+    if (typeof TextEncoder !== "undefined") {
+        return new TextEncoder().encode(serialized).byteLength;
+    }
+    return serialized.length;
+}
+
+export function dispatchReportBatch<T>(
+    data: T[],
+    onReport?: ReportCallback<T>,
+): void {
+    if (data.length === 0) return;
+    invokeSafely(() => {
+        if (!config.url) return;
+        installLifecycleFlush();
+        let chunkBytes = 0;
+        for (const item of data) {
+            const itemBytes = serializedBytes(item);
+            if (chunkBytes > 0 && chunkBytes + itemBytes > MAX_REPORT_BATCH_BYTES) {
+                flushQueue();
+                chunkBytes = 0;
+            }
+            addCache(item);
+            chunkBytes += itemBytes;
+        }
+        flushQueue();
+    });
+    for (const item of data) {
+        notifyReportListeners(item);
+        if (onReport) invokeSafely(() => onReport(item));
+    }
+}
+
+/**
  * 优先在浏览器空闲阶段执行传输，不支持时退化为异步任务。
  */
 function schedule(callback: () => void): void {

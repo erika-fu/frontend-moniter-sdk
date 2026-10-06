@@ -49,7 +49,10 @@ observeReplay({
   maskAllInputs: true,
   blockClass: "private-content",
   blockSelector: "[data-private], .secret",
+  preErrorDuration: 30000,
   bufferSize: 100,
+  maxReplayEvents: 1000,
+  maxReplayBytes: 5 * 1024 * 1024,
   postErrorDuration: 2000,
 });
 ```
@@ -57,8 +60,11 @@ observeReplay({
 | 参数 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `onReport` | `(data: ReplayEventReportData) => void` | 无 | 每条回放事件进入统一分发后调用 |
-| `bufferSize` | `number` | `100` | 最近一次完整快照后保留的近期事件数，最小为 1 |
-| `postErrorDuration` | `number` | `2000` | 错误后继续录制的毫秒数，最小为 0 |
+| `preErrorDuration` | `number` | `30000` | 错误前按 rrweb 时间戳保留的毫秒数，最小为 0 |
+| `bufferSize` | `number` | `100` | 兼容旧配置；作为回放最大事件数的兜底上限 |
+| `maxReplayEvents` | `number` | `1000` | 单个回放片段最多保留的事件数 |
+| `maxReplayBytes` | `number` | `5 MiB` | 单个回放片段最多保留的 JSON 字节数 |
+| `postErrorDuration` | `number` | `2000` | 错误后继续录制的毫秒数，最小为 0；等待期间不伪造事件 |
 | `maskAllInputs` | `boolean` | `true` | 是否脱敏所有输入值 |
 | `blockClass` | `string` | `"monitor-block"` | rrweb 屏蔽元素的 class |
 | `blockSelector` | `string` | `"[data-monitor-mask]"` | rrweb 屏蔽元素的选择器 |
@@ -99,7 +105,7 @@ interface ReplayErrorContext {
 }
 ```
 
-`replayOffset` 是错误发生时距当前回放片段开始的毫秒数。错误报告立即进入统一分发；回放事件默认在错误后继续采集 2 秒再批量进入统一分发，因此播放器可以展示错误前后的上下文。`postErrorDuration: 0` 会在错误发生后立即冲刷已经具备完整快照的片段。
+`replayOffset` 是错误发生时距当前回放片段开始的毫秒数。SDK 平时按 `preErrorDuration` 保留最近一段真实 rrweb 事件，并以 `maxReplayEvents`/`maxReplayBytes` 作为内存上限；错误报告立即进入统一分发，回放事件默认在错误后继续采集 2 秒再作为一个受限片段批量进入统一分发，因此播放器可以展示错误前后的上下文。等待窗口不会生成虚假操作事件，页面空闲时回放时长仍以最后一个真实事件为准。`postErrorDuration: 0` 会在错误发生后立即冲刷已经具备完整快照的片段。
 
 如果错误发生在 rrweb full snapshot 产生之前，SDK 会暂缓冲刷，不会上报只有 Meta/bootstrap 事件的不可播放片段；full snapshot 到达后再冲刷完整事件序列。即使 snapshot 晚于错误尾段窗口到达，也会等待它，避免产生 0ms 的 Meta-only 回放。
 
@@ -121,7 +127,7 @@ if (error.replayId && error.replayOffset !== undefined) {
 
 回放页面应使用 `replayId` 查询并组合该片段的事件，使用 `replayOffset` 定位错误时刻；`sessionId` 用于把同一次页面录制产生的多个片段关联起来。
 
-每个 rrweb 事件会形成一条报告：
+每个 rrweb 事件仍保留一条标准化数据记录，但同一个错误片段会由 SDK 聚合成一个受限上报批次；普通报告的 `batchSize` 不会拆散 replay 片段：
 
 ```ts
 interface ReplayEventReportData {

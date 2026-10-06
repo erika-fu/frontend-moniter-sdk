@@ -3,10 +3,12 @@ import {
     type eventWithTime,
     type recordOptions,
 } from "rrweb";
-import { dispatchReport, flushReportQueue } from "../report.js";
+import { dispatchReportBatch } from "../report.js";
 
-const DEFAULT_BUFFER_SIZE = 100;
+const DEFAULT_MAX_REPLAY_EVENTS = 1000;
+const DEFAULT_PRE_ERROR_DURATION = 30_000;
 const DEFAULT_POST_ERROR_DURATION = 2000;
+const MAX_REPLAY_BYTES = 5 * 1024 * 1024;
 const FULL_SNAPSHOT_EVENT_TYPE = 2;
 
 export interface ReplaySession {
@@ -36,8 +38,14 @@ export type ReplayReportData = ReplayEventReportData;
 export interface ReplayMonitoringOptions {
     /** 异常发生时接收缓存的录屏事件，不影响 SDK 自身上报。 */
     onReport?: ReplayReportHandler;
-    /** 环形缓存最多保留的 rrweb 事件数，默认 100。 */
+    /** 兼容旧配置：回放缓冲最多保留的 rrweb 事件数，默认 100。 */
     bufferSize?: number;
+    /** 错误前按事件时间保留的毫秒数，默认 30000。 */
+    preErrorDuration?: number;
+    /** 回放片段最多保留的事件数，默认 1000；提供 bufferSize 时兼容其值。 */
+    maxReplayEvents?: number;
+    /** 回放片段最多保留的 JSON 字节数，默认 5 MiB。 */
+    maxReplayBytes?: number;
     /** 异常后继续录制的毫秒数，默认 2000；设为 0 时立即上报。 */
     postErrorDuration?: number;
     /** 是否脱敏全部输入框，默认开启。 */
@@ -63,20 +71,19 @@ let session: ReplaySession | undefined;
 let activeSessionId: string | undefined;
 let stopRecording: (() => void) | undefined;
 let reportHandler: ReplayReportHandler | undefined;
-let buffer: Array<BufferedReplayEvent | undefined> = [];
-let postErrorBuffer: Array<BufferedReplayEvent | undefined> = [];
-let bufferSize = DEFAULT_BUFFER_SIZE;
-let bufferStart = 0;
-let bufferLength = 0;
-let postErrorBufferStart = 0;
-let postErrorBufferLength = 0;
+let buffer: BufferedReplayEvent[] = [];
+let postErrorBuffer: BufferedReplayEvent[] = [];
+let maxReplayEvents = DEFAULT_MAX_REPLAY_EVENTS;
+let maxReplayBytes = MAX_REPLAY_BYTES;
+let preErrorDuration = DEFAULT_PRE_ERROR_DURATION;
+let bufferBytes = 0;
+let postErrorBufferBytes = 0;
 let snapshot: BufferedReplayEvent | undefined;
 let bootstrapEvents: BufferedReplayEvent[] = [];
 let frozenPreErrorEvents: BufferedReplayEvent[] | undefined;
 let postErrorDuration = DEFAULT_POST_ERROR_DURATION;
 let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
 let pendingFlushSessionId: string | undefined;
-let pendingFlushReplayId: string | undefined;
 let replayOptions: ReplayMonitoringOptions = {};
 
 function getNow(): number {
@@ -97,16 +104,28 @@ function createSessionId(): string {
     return `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function normalizeBufferSize(value: number | undefined): number {
+function normalizeLimit(value: number | undefined, fallback: number): number {
     return Number.isFinite(value)
         ? Math.max(1, Math.floor(value as number))
-        : DEFAULT_BUFFER_SIZE;
+        : fallback;
+}
+
+function normalizeDuration(value: number | undefined, fallback: number): number {
+    return Number.isFinite(value)
+        ? Math.max(0, Math.floor(value as number))
+        : fallback;
+}
+
+function eventBytes(event: eventWithTime): number {
+    const serialized = JSON.stringify(event);
+    if (typeof TextEncoder !== "undefined") {
+        return new TextEncoder().encode(serialized).byteLength;
+    }
+    return serialized.length;
 }
 
 function normalizePostErrorDuration(value: number | undefined): number {
-    return Number.isFinite(value)
-        ? Math.max(0, Math.floor(value as number))
-        : DEFAULT_POST_ERROR_DURATION;
+    return normalizeDuration(value, DEFAULT_POST_ERROR_DURATION);
 }
 
 function clearPendingFlush(): void {
@@ -115,13 +134,11 @@ function clearPendingFlush(): void {
         pendingFlushTimer = undefined;
     }
     pendingFlushSessionId = undefined;
-    pendingFlushReplayId = undefined;
 }
 
 function schedulePendingFlush(sessionId: string, replayId: string, delay: number): void {
     clearPendingFlush();
     pendingFlushSessionId = sessionId;
-    pendingFlushReplayId = replayId;
     pendingFlushTimer = setTimeout(() => {
         pendingFlushTimer = undefined;
         if (
@@ -130,12 +147,10 @@ function schedulePendingFlush(sessionId: string, replayId: string, delay: number
             session.replayId !== replayId
         ) {
             pendingFlushSessionId = undefined;
-            pendingFlushReplayId = undefined;
             return;
         }
         if (snapshot) {
             pendingFlushSessionId = undefined;
-            pendingFlushReplayId = undefined;
             flushReplayBuffer(sessionId, replayId);
         }
     }, delay);
@@ -144,10 +159,8 @@ function schedulePendingFlush(sessionId: string, replayId: string, delay: number
 function resetReplayBuffer(): void {
     buffer = [];
     postErrorBuffer = [];
-    bufferStart = 0;
-    bufferLength = 0;
-    postErrorBufferStart = 0;
-    postErrorBufferLength = 0;
+    bufferBytes = 0;
+    postErrorBufferBytes = 0;
     snapshot = undefined;
     bootstrapEvents = [];
     frozenPreErrorEvents = undefined;
@@ -155,55 +168,70 @@ function resetReplayBuffer(): void {
 
 function clearReplayEvents(): void {
     buffer = [];
-    bufferStart = 0;
-    bufferLength = 0;
+    bufferBytes = 0;
 }
 
 function clearPostErrorEvents(): void {
     postErrorBuffer = [];
-    postErrorBufferStart = 0;
-    postErrorBufferLength = 0;
+    postErrorBufferBytes = 0;
+}
+
+function trimBuffer(values: BufferedReplayEvent[], byteCount: number): number {
+    while (
+        values.length > maxReplayEvents ||
+        byteCount > maxReplayBytes
+    ) {
+        const removed = values.shift();
+        if (!removed) break;
+        byteCount -= eventBytes(removed.event);
+    }
+    return byteCount;
 }
 
 function addToRingBuffer(value: BufferedReplayEvent): void {
-    if (bufferSize <= 0) return;
-    if (buffer.length !== bufferSize) buffer = Array.from({ length: bufferSize });
-    const index = (bufferStart + bufferLength) % bufferSize;
-    buffer[index] = value;
-    if (bufferLength < bufferSize) bufferLength += 1;
-    else bufferStart = (bufferStart + 1) % bufferSize;
+    buffer.push(value);
+    const oldestTimestamp = value.event.timestamp - preErrorDuration;
+    buffer = buffer.filter((bufferedEvent) =>
+        bufferedEvent.event.timestamp >= oldestTimestamp,
+    );
+    bufferBytes = buffer.reduce(
+        (total, bufferedEvent) => total + eventBytes(bufferedEvent.event),
+        0,
+    );
+    bufferBytes = trimBuffer(buffer, bufferBytes);
 }
 
 function addToPostErrorBuffer(value: BufferedReplayEvent): void {
-    if (bufferSize <= 0) return;
-    if (postErrorBuffer.length !== bufferSize) {
-        postErrorBuffer = Array.from({ length: bufferSize });
-    }
-    const index = (postErrorBufferStart + postErrorBufferLength) % bufferSize;
-    postErrorBuffer[index] = value;
-    if (postErrorBufferLength < bufferSize) postErrorBufferLength += 1;
-    else postErrorBufferStart = (postErrorBufferStart + 1) % bufferSize;
-}
-
-function readRingBuffer(
-    values: Array<BufferedReplayEvent | undefined>,
-    start: number,
-    length: number,
-): BufferedReplayEvent[] {
-    const events: BufferedReplayEvent[] = [];
-    for (let index = 0; index < length; index += 1) {
-        const event = values[(start + index) % bufferSize];
-        if (event) events.push(event);
-    }
-    return events;
+    postErrorBuffer.push(value);
+    postErrorBufferBytes = trimBuffer(
+        postErrorBuffer,
+        postErrorBufferBytes + eventBytes(value.event),
+    );
 }
 
 function getBufferedEvents(): BufferedReplayEvent[] {
     const events: BufferedReplayEvent[] = [...bootstrapEvents];
     if (snapshot) events.push(snapshot);
-    events.push(...(frozenPreErrorEvents ?? readRingBuffer(buffer, bufferStart, bufferLength)));
-    events.push(...readRingBuffer(postErrorBuffer, postErrorBufferStart, postErrorBufferLength));
-    return events;
+    events.push(...(frozenPreErrorEvents ?? buffer));
+    events.push(...postErrorBuffer);
+    const seen = new Set<eventWithTime>();
+    return events
+        .filter((bufferedEvent) => {
+            if (seen.has(bufferedEvent.event)) return false;
+            seen.add(bufferedEvent.event);
+            return true;
+        })
+        .sort((left, right) => left.event.timestamp - right.event.timestamp);
+}
+
+function getErrorTimestamp(
+    currentSession: ReplaySession,
+    errorContext: ReplayErrorContext,
+): number {
+    // rrweb timestamps are wall-clock timestamps; use the latest observed event
+    // when available so sparse event streams do not lose their final pre-error event.
+    return buffer.at(-1)?.event.timestamp ??
+        currentSession.startedAt + errorContext.replayOffset;
 }
 
 function createReplayReport(
@@ -301,19 +329,23 @@ export function observeReplay(
     if (session) {
         replayOptions = { ...replayOptions, ...options };
         reportHandler = options.onReport;
-        postErrorDuration = normalizePostErrorDuration(
-            options.postErrorDuration,
-        );
+        postErrorDuration = normalizePostErrorDuration(options.postErrorDuration);
         return;
     }
 
     replayOptions = { ...options };
     reportHandler = options.onReport;
     activeSessionId = createSessionId();
-    bufferSize = normalizeBufferSize(options.bufferSize);
-    postErrorDuration = normalizePostErrorDuration(
-        options.postErrorDuration,
+    maxReplayEvents = normalizeLimit(
+        options.maxReplayEvents ?? options.bufferSize,
+        DEFAULT_MAX_REPLAY_EVENTS,
     );
+    maxReplayBytes = normalizeLimit(options.maxReplayBytes, MAX_REPLAY_BYTES);
+    preErrorDuration = normalizeDuration(
+        options.preErrorDuration,
+        DEFAULT_PRE_ERROR_DURATION,
+    );
+    postErrorDuration = normalizePostErrorDuration(options.postErrorDuration);
     startReplaySession();
 }
 
@@ -374,13 +406,12 @@ function flushReplayBuffer(sessionId: string, replayId: string): void {
     const uniqueEvents = events.filter((bufferedEvent, index) =>
         events.findIndex((candidate) => candidate.event === bufferedEvent.event) === index,
     );
-    for (const bufferedEvent of uniqueEvents) {
-        dispatchReport(
+    dispatchReportBatch(
+        uniqueEvents.map((bufferedEvent) =>
             createReplayReport(finishedSession, bufferedEvent),
-            reportHandler,
-        );
-    }
-    flushReportQueue();
+        ),
+        reportHandler,
+    );
 
     // 一个错误片段对应一个独立 session，避免后续片段复用旧 snapshot。
     stopRecording?.();
@@ -412,7 +443,11 @@ export function flushReplayOnError(
 
     const sessionId = session.sessionId;
     if (!frozenPreErrorEvents) {
-        frozenPreErrorEvents = readRingBuffer(buffer, bufferStart, bufferLength);
+        const errorTimestamp = getErrorTimestamp(session, errorContext);
+        frozenPreErrorEvents = buffer.filter((bufferedEvent) =>
+            bufferedEvent.event.timestamp >= errorTimestamp - preErrorDuration &&
+            bufferedEvent.event.timestamp <= errorTimestamp,
+        );
         clearReplayEvents();
         clearPostErrorEvents();
     }

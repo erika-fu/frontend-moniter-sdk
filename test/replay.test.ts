@@ -151,6 +151,31 @@ describe("observeReplay", () => {
         expect(onReport.mock.calls.map(([report]) => report.event.type)).toEqual([4, 2, 3]);
     });
 
+    it("keeps events from the configured time window instead of only event count", () => {
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+
+        observeReplay({ onReport, preErrorDuration: 100, maxReplayEvents: 10, postErrorDuration: 0 });
+        const replay = getReplaySession()!;
+        emit?.({ type: 2, timestamp: replay.startedAt - 200, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt - 150, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt - 50, data: {} } as unknown as eventWithTime);
+        emit?.({ type: 3, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
+
+        flushReplayOnError({ replayId: replay.replayId, sessionId: replay.sessionId, replayOffset: 0 });
+
+        expect(onReport.mock.calls.map(([report]) => report.event.timestamp)).toEqual([
+            replay.startedAt - 200,
+            replay.startedAt - 50,
+            replay.startedAt,
+        ]);
+    });
+
     it("creates a seekable URL from replay error context", () => {
         expect(
             createReplayUrl("/replay", {

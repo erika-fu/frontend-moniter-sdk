@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearReportQueue,
   dispatchReport,
+  dispatchReportBatch,
   flushReportQueue,
   getReportConfig,
   lazyReportBatch,
@@ -127,6 +128,25 @@ describe("reporting", () => {
 
     lazyReportBatch({ sequence: 3 });
     expect(sendBeacon).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a replay batch together even when ordinary batchSize is one", () => {
+    const sendBeacon = vi.fn<(url: string, data: string) => boolean>(() => true);
+    vi.stubGlobal("window", {
+      navigator: { sendBeacon },
+      addEventListener: vi.fn(),
+    });
+    vi.stubGlobal("navigator", window.navigator);
+    setConfig({ url: "/monitor", batchSize: 1 });
+
+    dispatchReportBatch([{ type: "replay", replayOffset: 1 }, { type: "replay", replayOffset: 2 }]);
+
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const request = sendBeacon.mock.calls[0];
+    expect(JSON.parse(String(request?.[1])).data).toEqual([
+      { type: "replay", replayOffset: 1 },
+      { type: "replay", replayOffset: 2 },
+    ]);
   });
 
   it("dispatches collected data to local subscribers and callbacks", () => {

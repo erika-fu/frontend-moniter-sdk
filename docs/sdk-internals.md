@@ -63,7 +63,7 @@
 
 ## 6. 错误与录屏
 
-录屏运行时，错误模块先调用 `getReplayErrorContext()`，把 `sessionId`、`replayId` 和 `replayOffset` 写入错误报告，再调用 `flushReplayOnError(context)`。错误报告立即分发；录屏片段默认等待 2 秒尾段后分发，并强制尝试 flush 报告缓存。
+录屏运行时，错误模块先调用 `getReplayErrorContext()`，把 `sessionId`、`replayId` 和 `replayOffset` 写入错误报告，再调用 `flushReplayOnError(context)`。录屏模块平时按 `preErrorDuration` 保留最近真实事件，并以事件数和字节数限制内存；错误报告立即分发，回放片段独立收集 `postErrorDuration` 尾段后作为受限 chunk 分发，不受普通 `batchSize` 拆分影响。等待尾段不会生成虚假 rrweb 事件，片段仍强制尝试 flush 报告缓存。
 
 `sessionId` 标识一次页面录制生命周期，`replayId` 标识一次可独立播放的错误片段。片段冲刷后保留 `sessionId`，生成新的 `replayId` 和 DOM snapshot；显式停止录屏后两个 ID 都结束。
 
