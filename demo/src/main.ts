@@ -15,7 +15,7 @@ frontendMonitor.init({
     appId: import.meta.env.VITE_MONITOR_APP_ID ?? "vue-demo",
     userId: import.meta.env.VITE_MONITOR_USER_ID ?? "local-developer",
     release: import.meta.env.VITE_MONITOR_RELEASE ?? "demo@0.1.0",
-    batchSize: 1,
+    batchSize: 20,
 });
 
 frontendMonitor.performance();
