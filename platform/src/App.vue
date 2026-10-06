@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import ReplayPlayer from "./ReplayPlayer.vue";
+import type { eventWithTime } from "@rrweb/types";
 
 interface AppInfo {
   appId: string;
@@ -85,6 +87,36 @@ interface ErrorDetail {
   issue: ErrorIssue;
   events: { items: EventItem[]; total: number; page: number; pageSize: number };
 }
+interface ReplaySession {
+  appId: string;
+  projectName: string;
+  replayId: string;
+  sessionId: string;
+  userId: string;
+  pageUrl: string;
+  startedAt: number;
+  lastSeen: number;
+  duration: number;
+  eventCount: number;
+  errorCount: number;
+  status: "ready" | "incomplete" | "unplayable";
+}
+interface ReplayEvent {
+  timestamp: number;
+  replayOffset: number;
+  event: eventWithTime;
+  isCheckout: boolean;
+}
+interface ReplayResult {
+  items: ReplaySession[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+interface ReplayDetail {
+  session: ReplaySession;
+  events: ReplayEvent[];
+}
 interface SourceMapRecord {
   appId: string;
   release: string;
@@ -98,7 +130,7 @@ const selectedAppId = ref("");
 const from = ref("");
 const to = ref("");
 const selectedType = ref("");
-const view = ref<"overview" | "performance" | "errors" | "sourceMaps">("overview");
+const view = ref<"overview" | "performance" | "errors" | "replay" | "sourceMaps">("overview");
 const sourceMapRelease = ref("");
 const sourceMapGeneratedFile = ref("");
 const sourceMaps = ref<SourceMapRecord[]>([]);
@@ -113,6 +145,14 @@ const errorSubType = ref("");
 const errorSearch = ref("");
 const errorResult = ref<ErrorResult | null>(null);
 const selectedError = ref<ErrorDetail | null>(null);
+const replayResult = ref<ReplayResult | null>(null);
+const selectedReplay = ref<ReplayDetail | null>(null);
+const selectedReplayId = ref("");
+const replayOffset = ref<number>();
+const replayFilterId = ref("");
+const replayUserId = ref("");
+const replayPage = ref(1);
+const replayLoading = ref(false);
 const errorPage = ref(1);
 const errorLoading = ref(false);
 const overview = ref<Overview | null>(null);
@@ -168,6 +208,18 @@ function sourceMapQueryString(): string {
   if (sourceMapRelease.value.trim()) {
     params.set("release", sourceMapRelease.value.trim());
   }
+  return params.toString();
+}
+
+function replayQueryString(): string {
+  const params = new URLSearchParams();
+  if (selectedAppId.value) params.set("appId", selectedAppId.value);
+  if (from.value) params.set("from", String(new Date(`${from.value}T00:00:00`).getTime()));
+  if (to.value) params.set("to", String(new Date(`${to.value}T23:59:59.999`).getTime()));
+  if (replayFilterId.value.trim()) params.set("replayId", replayFilterId.value.trim());
+  if (replayUserId.value.trim()) params.set("userId", replayUserId.value.trim());
+  params.set("page", String(replayPage.value));
+  params.set("pageSize", "20");
   return params.toString();
 }
 
@@ -305,6 +357,56 @@ async function loadSourceMaps(): Promise<void> {
   }
 }
 
+async function loadReplayDetail(id: string): Promise<void> {
+  selectedReplayId.value = id;
+  const response = await fetch(
+    `${apiUrl}/api/v1/replays/${encodeURIComponent(id)}?appId=${encodeURIComponent(selectedAppId.value)}`,
+  );
+  if (!response.ok) {
+    selectedReplay.value = null;
+    throw new Error("回放会话不可用");
+  }
+  selectedReplay.value = (await response.json()) as ReplayDetail;
+}
+
+async function loadReplays(): Promise<void> {
+  replayLoading.value = true;
+  error.value = "";
+  try {
+    const response = await fetch(`${apiUrl}/api/v1/replays?${replayQueryString()}`);
+    if (!response.ok) throw new Error("回放列表加载失败");
+    replayResult.value = (await response.json()) as ReplayResult;
+    const current = replayResult.value.items.find((item) => item.replayId === selectedReplayId.value);
+    if (current) await loadReplayDetail(current.replayId);
+    else if (replayResult.value.items[0]) await loadReplayDetail(replayResult.value.items[0].replayId);
+    else selectedReplay.value = null;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "回放列表加载失败";
+  } finally {
+    replayLoading.value = false;
+    loading.value = false;
+  }
+}
+
+async function openReplay(
+  replayId: string,
+  offset?: number,
+  filter = false,
+): Promise<void> {
+  view.value = "replay";
+  selectedReplayId.value = replayId;
+  if (filter) {
+    replayFilterId.value = replayId;
+    replayUserId.value = "";
+  }
+  replayOffset.value = offset;
+  try {
+    await loadReplays();
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "回放会话不可用";
+  }
+}
+
 function selectSourceMapFile(event: Event): void {
   sourceMapFile.value = (event.target as HTMLInputElement).files?.[0] ?? null;
   sourceMapGeneratedFile.value = sourceMapFile.value?.name.replace(/\.map$/, "") ?? "";
@@ -409,6 +511,9 @@ watch([selectedAppId, from, to, performanceKeyword, performanceResourceType, per
 watch([selectedAppId, from, to, errorStatus, errorSubType, errorSearch, errorPage], () => {
   if (apps.value.length > 0 && view.value === "errors") void loadErrors();
 });
+watch([selectedAppId, from, to, replayFilterId, replayUserId, replayPage], () => {
+  if (apps.value.length > 0 && view.value === "replay") void loadReplays();
+});
 watch([selectedAppId, sourceMapRelease], () => {
   if (view.value === "sourceMaps" && apps.value.length > 0) void loadSourceMaps();
 });
@@ -418,6 +523,7 @@ onMounted(() => {
   refreshTimer = window.setInterval(() => {
     if (view.value === "errors") void loadErrors();
     else if (view.value === "performance") void loadPerformance();
+    else if (view.value === "replay") void loadReplays();
     else if (view.value === "sourceMaps") void loadSourceMaps();
     else void loadOverview();
   }, 30_000);
@@ -435,7 +541,7 @@ onUnmounted(() => {
         <h1>监控总览</h1>
         <p class="subtitle">{{ selectedApp?.projectName || "选择一个应用查看上报事件" }}</p>
       </div>
-      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'performance' ? loadPerformance() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
+      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'performance' ? loadPerformance() : view === 'replay' ? loadReplays() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
         <span aria-hidden="true">↻</span> 刷新事件
       </button>
     </header>
@@ -444,6 +550,7 @@ onUnmounted(() => {
       <button type="button" :class="{ active: view === 'overview' }" @click="view = 'overview'; void loadOverview()">总览</button>
       <button type="button" :class="{ active: view === 'performance' }" @click="view = 'performance'; void loadPerformance()">性能分析</button>
       <button type="button" :class="{ active: view === 'errors' }" @click="view = 'errors'; void loadErrors()">错误事项</button>
+      <button type="button" :class="{ active: view === 'replay' }" @click="view = 'replay'; void loadReplays()">会话回放</button>
       <button type="button" :class="{ active: view === 'sourceMaps' }" @click="view = 'sourceMaps'; void loadSourceMaps()">Source Map</button>
     </nav>
 
@@ -468,7 +575,7 @@ onUnmounted(() => {
       </label>
     </section>
 
-    <p v-if="loading || errorLoading || performanceLoading" class="state">正在加载监控数据...</p>
+    <p v-if="loading || errorLoading || performanceLoading || replayLoading" class="state">正在加载监控数据...</p>
     <p v-else-if="error" class="state state-error" role="alert">{{ error }}</p>
     <template v-else-if="view === 'overview' && overview">
       <section class="summary-grid" aria-label="统计摘要">
@@ -630,9 +737,46 @@ onUnmounted(() => {
         </details>
         <h3>发生记录</h3>
         <div class="table-wrap"><table><thead><tr><th>时间</th><th>页面</th><th>用户</th><th>版本</th><th>原始上报</th></tr></thead><tbody>
-          <tr v-for="event in selectedError.events.items" :key="event.id"><td>{{ formatTime(event.timestamp) }}</td><td>{{ event.pageUrl || "-" }}</td><td>{{ event.userId || "-" }}</td><td>{{ event.release || "-" }}</td><td><code>{{ JSON.stringify(event.raw) }}</code></td></tr>
+          <tr v-for="event in selectedError.events.items" :key="event.id"><td>{{ formatTime(event.timestamp) }}</td><td>{{ event.pageUrl || "-" }}</td><td>{{ event.userId || "-" }}</td><td>{{ event.release || "-" }}</td><td><button v-if="typeof event.data.replayId === 'string'" class="text-button" type="button" @click="openReplay(event.data.replayId, typeof event.data.replayOffset === 'number' ? event.data.replayOffset : undefined, true)">跳到回放</button><code>{{ JSON.stringify(event.raw) }}</code></td></tr>
         </tbody></table></div>
       </aside>
+    </template>
+    <template v-else-if="view === 'replay' && replayResult">
+      <section class="replay-section" aria-labelledby="replay-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">Session replay</p><h2 id="replay-title">会话回放</h2></div>
+          <span class="result-count">{{ replayResult.total }} 个会话</span>
+        </div>
+        <div class="filters replay-filters" aria-label="回放筛选">
+          <label>回放 ID <input v-model="replayFilterId" type="search" placeholder="精确匹配回放 ID"></label>
+          <label>用户 ID <input v-model="replayUserId" type="search" placeholder="精确匹配用户"></label>
+        </div>
+        <div v-if="replayResult.items.length === 0" class="state">当前筛选条件下没有可用回放</div>
+        <div v-else class="replay-layout">
+          <aside class="replay-sessions" aria-label="回放会话列表">
+            <button v-for="session in replayResult.items" :key="session.replayId" type="button" class="replay-session" :class="{ active: selectedReplayId === session.replayId }" @click="void openReplay(session.replayId)">
+              <strong>{{ session.replayId }}</strong>
+              <span>{{ session.eventCount }} 个事件 · {{ duration(session.duration) }}</span>
+              <small>{{ session.userId || "匿名用户" }} · {{ session.errorCount }} 个关联错误</small>
+              <small v-if="session.status !== 'ready'" class="replay-warning">状态：{{ session.status === "incomplete" ? "数据不完整" : "无法播放" }}</small>
+            </button>
+          </aside>
+          <section v-if="selectedReplay" class="replay-stage">
+            <div class="section-heading">
+              <div><p class="eyebrow">Playback</p><h3>{{ selectedReplay.session.replayId }}</h3></div>
+              <span>{{ selectedReplay.session.eventCount }} 个事件 · {{ selectedReplay.session.userId || "匿名用户" }}</span>
+            </div>
+            <p v-if="selectedReplay.session.status !== 'ready'" class="state state-error">{{ selectedReplay.session.status === "incomplete" ? "该会话缺少完整快照，播放器无法可靠播放。" : "该会话事件数据损坏，无法播放。" }}其他会话查询不受影响。</p>
+            <ReplayPlayer v-else :key="`${selectedReplay.session.replayId}-${selectedReplay.events.length}`" :events="selectedReplay.events.map((item) => item.event)" :initial-offset="replayOffset" />
+          </section>
+          <section v-else class="replay-stage state-error">当前回放会话缺失或无法加载。</section>
+        </div>
+        <div v-if="replayResult.total > replayResult.pageSize" class="pagination">
+          <button type="button" :disabled="replayPage <= 1" @click="replayPage--">上一页</button>
+          <span>第 {{ replayPage }} 页</span>
+          <button type="button" :disabled="replayPage * replayResult.pageSize >= replayResult.total" @click="replayPage++">下一页</button>
+        </div>
+      </section>
     </template>
     <template v-else-if="view === 'sourceMaps'">
       <section class="source-map-section" aria-labelledby="source-maps-title">

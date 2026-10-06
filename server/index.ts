@@ -7,7 +7,10 @@ import {
 import { pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 import { isParseableSourceMap } from "./sourceMaps.js";
-import { SQLiteReportStore, type SourceMapUpload } from "./store.js";
+import {
+    SQLiteReportStore,
+    type SourceMapUpload,
+} from "./store.js";
 import type { ErrorStatus } from "./errorIssues.js";
 import type { PerformanceMetricName } from "./performance.js";
 
@@ -46,6 +49,9 @@ const CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 };
+const REPORT_MAX_BYTES = 1 * 1024 * 1024;
+
+class RequestBodyLimitError extends Error {}
 
 function parseJson(value: string): unknown {
     try {
@@ -55,11 +61,22 @@ function parseJson(value: string): unknown {
     }
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<unknown> {
+async function readRequestBody(
+    request: IncomingMessage,
+    maxBytes = REPORT_MAX_BYTES,
+): Promise<unknown> {
     const chunks: Buffer[] = [];
+    let size = 0;
 
     for await (const chunk of request) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += buffer.length;
+        if (size > maxBytes) {
+            throw new RequestBodyLimitError(
+                `request body exceeds the ${maxBytes} byte limit.`,
+            );
+        }
+        chunks.push(buffer);
     }
 
     const body = Buffer.concat(chunks).toString("utf8");
@@ -466,6 +483,33 @@ export function createReportServer(
                 }));
                 return;
             }
+            if (url.pathname === "/api/v1/replays") {
+                sendJson(response, 200, store.queryReplays({
+                    appId: query.appId,
+                    replayId: url.searchParams.get("replayId") ?? undefined,
+                    userId: url.searchParams.get("userId") ?? undefined,
+                    from: query.from,
+                    to: query.to,
+                    page,
+                    pageSize,
+                }));
+                return;
+            }
+            if (url.pathname.startsWith("/api/v1/replays/")) {
+                const replayId = decodeURIComponent(
+                    url.pathname.slice("/api/v1/replays/".length),
+                );
+                const replay = store.getReplay(replayId, query.appId);
+                if (!replay) {
+                    sendJson(response, 404, {
+                        error: "replay_not_found",
+                        message: "Replay session was not found.",
+                    });
+                    return;
+                }
+                sendJson(response, 200, replay);
+                return;
+            }
             if (url.pathname.startsWith("/api/v1/errors/")) {
                 const fingerprint = decodeURIComponent(
                     url.pathname.slice("/api/v1/errors/".length),
@@ -577,6 +621,16 @@ export function createReportServer(
 
         if (request.method === "GET") {
             const data = url.searchParams.get("data");
+            if (
+                data !== null &&
+                Buffer.byteLength(data, "utf8") > REPORT_MAX_BYTES
+            ) {
+                sendJson(response, 413, {
+                    error: "request_too_large",
+                    message: `request body exceeds the ${REPORT_MAX_BYTES} byte limit.`,
+                });
+                return;
+            }
             const payload = data === null ? null : parseJson(data);
             const normalized = normalizeReport(
                 payload,
@@ -601,10 +655,20 @@ export function createReportServer(
         }
 
         if (request.method === "POST") {
-            const normalized = normalizeReport(
-                await readRequestBody(request),
-                isVersionedReportEndpoint,
-            );
+            let body: unknown;
+            try {
+                body = await readRequestBody(request);
+            } catch (error) {
+                if (error instanceof RequestBodyLimitError) {
+                    sendJson(response, 413, {
+                        error: "request_too_large",
+                        message: error.message,
+                    });
+                    return;
+                }
+                throw error;
+            }
+            const normalized = normalizeReport(body, isVersionedReportEndpoint);
             if (normalized.error) {
                 sendBadRequest(response, normalized.error);
                 return;
@@ -613,7 +677,31 @@ export function createReportServer(
                 normalized.report,
                 stackResolution,
             );
-            store.save(report);
+            try {
+                if (store instanceof SQLiteReportStore) {
+                    const replayLimit = store.validateReplayReport(report);
+                    if (replayLimit) {
+                        sendJson(response, 413, {
+                            error: "replay_limit_exceeded",
+                            message: replayLimit,
+                        });
+                        return;
+                    }
+                }
+                store.save(report);
+            } catch (error) {
+                if (
+                    error instanceof Error &&
+                    error.message.includes("Replay")
+                ) {
+                    sendJson(response, 413, {
+                        error: "replay_limit_exceeded",
+                        message: error.message,
+                    });
+                    return;
+                }
+                throw error;
+            }
             logger(report);
             if (isVersionedReportEndpoint) {
                 sendJson(response, 202, { status: "accepted" });

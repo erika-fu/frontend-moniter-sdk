@@ -88,6 +88,50 @@ export interface ErrorIssueQueryResult {
     pageSize: number;
 }
 
+export interface ReplaySession {
+    appId: string;
+    projectName: string;
+    replayId: string;
+    sessionId: string;
+    userId: string;
+    pageUrl: string;
+    startedAt: number;
+    lastSeen: number;
+    duration: number;
+    eventCount: number;
+    errorCount: number;
+    status: "ready" | "incomplete" | "unplayable";
+}
+
+export interface ReplayEvent {
+    timestamp: number;
+    replayOffset: number;
+    event: Record<string, unknown>;
+    isCheckout: boolean;
+}
+
+export interface ReplayQuery {
+    appId?: string | undefined;
+    replayId?: string | undefined;
+    userId?: string | undefined;
+    from?: number | undefined;
+    to?: number | undefined;
+    page: number;
+    pageSize: number;
+}
+
+export interface ReplayListResult {
+    items: ReplaySession[];
+    total: number;
+    page: number;
+    pageSize: number;
+}
+
+export interface ReplayDetail {
+    session: ReplaySession;
+    events: ReplayEvent[];
+}
+
 interface EnvelopeRecord {
     id?: string;
     protocolVersion?: number;
@@ -122,6 +166,43 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null
         ? (value as Record<string, unknown>)
         : {};
+}
+
+const MAX_REPLAY_EVENTS = 1000;
+const MAX_REPLAY_DURATION = 30 * 60 * 1000;
+const MAX_REPLAY_BYTES = 5 * 1024 * 1024;
+
+function replayData(value: unknown): {
+    replayId: string;
+    sessionId: string;
+    replayOffset: number;
+    event: Record<string, unknown>;
+    isCheckout: boolean;
+} | undefined {
+    const data = asRecord(value);
+    const event = data.event;
+    if (
+        data.type !== "replay" ||
+        data.subType !== "event" ||
+        typeof data.replayId !== "string" ||
+        typeof data.sessionId !== "string" ||
+        typeof data.replayOffset !== "number" ||
+        !Number.isFinite(data.replayOffset) ||
+        typeof event !== "object" ||
+        event === null ||
+        Array.isArray(event) ||
+        typeof (event as Record<string, unknown>).timestamp !== "number" ||
+        !Number.isFinite((event as Record<string, unknown>).timestamp)
+    ) {
+        return undefined;
+    }
+    return {
+        replayId: data.replayId,
+        sessionId: data.sessionId,
+        replayOffset: data.replayOffset,
+        event: event as Record<string, unknown>,
+        isCheckout: data.isCheckout === true,
+    };
 }
 
 function errorFilter(query: Omit<ErrorIssueQuery, "page" | "pageSize">): {
@@ -271,6 +352,38 @@ export class SQLiteReportStore {
                 created_at INTEGER NOT NULL,
                 PRIMARY KEY (app_id, release, generated_file)
             );
+            CREATE TABLE IF NOT EXISTS replay_sessions (
+                app_id TEXT NOT NULL,
+                replay_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                page_url TEXT NOT NULL,
+                started_at INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL,
+                duration INTEGER NOT NULL DEFAULT 0,
+                event_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
+                stored_bytes INTEGER NOT NULL DEFAULT 0,
+                has_snapshot INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (app_id, replay_id)
+            );
+            CREATE TABLE IF NOT EXISTS replay_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_id TEXT NOT NULL,
+                replay_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                replay_offset REAL NOT NULL,
+                event_json TEXT NOT NULL,
+                is_checkout INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (app_id, replay_id, timestamp, replay_offset, event_json),
+                FOREIGN KEY (app_id, replay_id)
+                    REFERENCES replay_sessions(app_id, replay_id)
+            );
+            CREATE INDEX IF NOT EXISTS replay_sessions_app_time
+                ON replay_sessions(app_id, last_seen DESC, replay_id ASC);
+            CREATE INDEX IF NOT EXISTS replay_events_session
+                ON replay_events(app_id, replay_id, replay_offset ASC, id ASC);
         `);
         try {
             this.database.exec(
@@ -279,6 +392,47 @@ export class SQLiteReportStore {
         } catch {
             // Existing databases already have the column.
         }
+    }
+
+    validateReplayReport(report: unknown): string | undefined {
+        const envelope = asRecord(report);
+        const events = Array.isArray(envelope.data) ? envelope.data : [];
+        const grouped = new Map<string, ReturnType<typeof replayData>[]>();
+        for (const item of events) {
+            const replay = replayData(item);
+            if (!replay) continue;
+            const values = grouped.get(replay.replayId) ?? [];
+            values.push(replay);
+            grouped.set(replay.replayId, values);
+        }
+        for (const [replayId, incoming] of grouped) {
+            const existing = this.database.prepare(`
+                SELECT event_count AS eventCount, duration, stored_bytes AS storedBytes
+                FROM replay_sessions WHERE app_id = ? AND replay_id = ?
+            `).get(
+                String(envelope.appId ?? "legacy"),
+                replayId,
+            ) as { eventCount: number; duration: number; storedBytes: number } | undefined;
+            const eventCount = (existing?.eventCount ?? 0) + incoming.length;
+            const maxOffset = Math.max(
+                existing?.duration ?? 0,
+                ...incoming.map((item) => item?.replayOffset ?? 0),
+            );
+            const addedBytes = incoming.reduce(
+                (total, item) => total + Buffer.byteLength(JSON.stringify(item?.event ?? {}), "utf8"),
+                0,
+            );
+            if (eventCount > MAX_REPLAY_EVENTS) {
+                return `Replay ${replayId} exceeds the ${MAX_REPLAY_EVENTS} event limit.`;
+            }
+            if (maxOffset > MAX_REPLAY_DURATION) {
+                return `Replay ${replayId} exceeds the ${MAX_REPLAY_DURATION}ms duration limit.`;
+            }
+            if ((existing?.storedBytes ?? 0) + addedBytes > MAX_REPLAY_BYTES) {
+                return `Replay ${replayId} exceeds the ${MAX_REPLAY_BYTES} byte storage limit.`;
+            }
+        }
+        return undefined;
     }
 
     save(report: unknown): void {
@@ -296,6 +450,10 @@ export class SQLiteReportStore {
         const userId = envelope.user?.id || envelope.userId || "";
         const pageUrl = envelope.environment?.url || "";
         const events = Array.isArray(envelope.data) ? envelope.data : [];
+        const replayLimit = this.validateReplayReport(report);
+        if (replayLimit) {
+            throw new Error(replayLimit);
+        }
 
         const transaction = this.database.transaction(() => {
             const result = this.database.prepare(`
@@ -337,6 +495,62 @@ export class SQLiteReportStore {
                     json(data),
                     json(report),
                 );
+                const replay = replayData(data);
+                if (replay) {
+                    this.database.prepare(`
+                        INSERT OR IGNORE INTO replay_sessions
+                        (app_id, replay_id, session_id, project_name, user_id, page_url, started_at, last_seen)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    `).run(
+                        appId,
+                        replay.replayId,
+                        replay.sessionId,
+                        projectName,
+                        userId,
+                        pageUrl,
+                        timestamp - replay.replayOffset,
+                        timestamp,
+                    );
+                    const replayEvent = this.database.prepare(`
+                        INSERT OR IGNORE INTO replay_events
+                        (app_id, replay_id, timestamp, replay_offset, event_json, is_checkout)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    `).run(
+                        appId,
+                        replay.replayId,
+                        replay.event.timestamp,
+                        replay.replayOffset,
+                        json(replay.event),
+                        replay.isCheckout ? 1 : 0,
+                    );
+                    if (replayEvent.changes > 0) {
+                        this.database.prepare(`
+                            UPDATE replay_sessions
+                            SET last_seen = MAX(last_seen, ?),
+                                duration = MAX(duration, ?),
+                                event_count = event_count + 1,
+                                stored_bytes = stored_bytes + ?,
+                                has_snapshot = MAX(has_snapshot, ?)
+                            WHERE app_id = ? AND replay_id = ?
+                        `).run(
+                            timestamp,
+                            replay.replayOffset,
+                            Buffer.byteLength(json(replay.event), "utf8"),
+                            replay.event.type === 2 ? 1 : 0,
+                            appId,
+                            replay.replayId,
+                        );
+                    }
+                    this.database.prepare(`
+                        UPDATE replay_sessions
+                        SET error_count = (
+                            SELECT COUNT(*) FROM events
+                            WHERE app_id = ? AND type = 'error'
+                                AND json_extract(data_json, '$.replayId') = ?
+                        )
+                        WHERE app_id = ? AND replay_id = ?
+                    `).run(appId, replay.replayId, appId, replay.replayId);
+                }
                 const identity = getErrorIdentity(appId, data);
                 if (identity) {
                     this.database.prepare(`
@@ -362,6 +576,16 @@ export class SQLiteReportStore {
                         (event_id, fingerprint, user_id, page_url, release)
                         VALUES (?, ?, ?, ?, ?)
                     `).run(eventResult.lastInsertRowid, identity.fingerprint, userId, pageUrl, release);
+                    const errorReplayId = typeof item.replayId === "string"
+                        ? item.replayId
+                        : undefined;
+                    if (errorReplayId) {
+                        this.database.prepare(`
+                            UPDATE replay_sessions
+                            SET error_count = error_count + 1
+                            WHERE app_id = ? AND replay_id = ?
+                        `).run(appId, errorReplayId);
+                    }
                 }
             }
         });
@@ -560,6 +784,102 @@ export class SQLiteReportStore {
         return this.database.prepare(
             "UPDATE error_issues SET status = ? WHERE fingerprint = ?",
         ).run(status, fingerprint).changes > 0;
+    }
+
+    queryReplays(query: ReplayQuery): ReplayListResult {
+        const conditions = ["1 = 1"];
+        const parameters: Array<string | number> = [];
+        if (query.appId) {
+            conditions.push("app_id = ?");
+            parameters.push(query.appId);
+        }
+        if (query.replayId) {
+            conditions.push("replay_id = ?");
+            parameters.push(query.replayId);
+        }
+        if (query.userId) {
+            conditions.push("user_id = ?");
+            parameters.push(query.userId);
+        }
+        if (query.from !== undefined) {
+            conditions.push("last_seen >= ?");
+            parameters.push(query.from);
+        }
+        if (query.to !== undefined) {
+            conditions.push("started_at <= ?");
+            parameters.push(query.to);
+        }
+        const where = conditions.join(" AND ");
+        const total = (this.database.prepare(
+            `SELECT COUNT(*) AS count FROM replay_sessions WHERE ${where}`,
+        ).get(...parameters) as { count: number }).count;
+        const rows = this.database.prepare(`
+            SELECT app_id AS appId, project_name AS projectName,
+                replay_id AS replayId, session_id AS sessionId,
+                user_id AS userId, page_url AS pageUrl,
+                started_at AS startedAt, last_seen AS lastSeen,
+                duration, event_count AS eventCount, error_count AS errorCount,
+                CASE WHEN has_snapshot = 1 THEN 'ready' ELSE 'incomplete' END AS status
+            FROM replay_sessions
+            WHERE ${where}
+            ORDER BY last_seen DESC, replay_id ASC
+            LIMIT ? OFFSET ?
+        `).all(...parameters, query.pageSize, (query.page - 1) * query.pageSize) as Array<Record<string, unknown>>;
+        return {
+            items: rows.map((row) => ({
+                appId: String(row.appId),
+                projectName: String(row.projectName),
+                replayId: String(row.replayId),
+                sessionId: String(row.sessionId),
+                userId: String(row.userId),
+                pageUrl: String(row.pageUrl),
+                startedAt: Number(row.startedAt),
+                lastSeen: Number(row.lastSeen),
+                duration: Number(row.duration),
+                eventCount: Number(row.eventCount),
+                errorCount: Number(row.errorCount),
+                status: row.status as ReplaySession["status"],
+            })),
+            total,
+            page: query.page,
+            pageSize: query.pageSize,
+        };
+    }
+
+    getReplay(
+        replayId: string,
+        appId?: string,
+    ): ReplayDetail | undefined {
+        const session = this.queryReplays({
+            appId,
+            replayId,
+            page: 1,
+            pageSize: 1,
+        }).items[0];
+        if (!session) return undefined;
+        const rows = this.database.prepare(`
+            SELECT timestamp, replay_offset AS replayOffset,
+                event_json AS event, is_checkout AS isCheckout
+            FROM replay_events
+            WHERE app_id = ? AND replay_id = ?
+            ORDER BY replay_offset ASC, id ASC
+        `).all(session.appId, replayId) as Array<Record<string, unknown>>;
+        try {
+            return {
+                session,
+                events: rows.map((row) => ({
+                    timestamp: Number(row.timestamp),
+                    replayOffset: Number(row.replayOffset),
+                    event: parse<Record<string, unknown>>(String(row.event)),
+                    isCheckout: Number(row.isCheckout) === 1,
+                })),
+            };
+        } catch {
+            return {
+                session: { ...session, status: "unplayable" },
+                events: [],
+            };
+        }
     }
 
     list(): unknown[] {

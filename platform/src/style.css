@@ -98,6 +98,18 @@ code { display: block; max-width: 280px; overflow: hidden; color: #47545e; font-
 .rank-list li { display: flex; justify-content: space-between; gap: 12px; }
 .rank-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rank-list strong { flex: 0 0 auto; color: #17202a; }
+.replay-section { margin-top: 36px; }
+.replay-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 20px; }
+.replay-sessions { display: grid; align-content: start; gap: 8px; }
+.replay-session { display: grid; gap: 5px; border: 1px solid #d7dde3; border-radius: 3px; padding: 12px; color: #17202a; background: #fff; text-align: left; cursor: pointer; }
+.replay-session:hover, .replay-session.active { border-color: #477a9e; background: #f4f8fa; }
+.replay-session strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replay-session span, .replay-session small { color: #5c6872; font-size: .8rem; }
+.replay-warning { color: #a33a2b !important; }
+.replay-stage { min-width: 0; border-top: 2px solid #477a9e; padding-top: 16px; }
+.replay-stage h3 { margin: 0; font-size: 1rem; }
+.replay-player { min-height: 320px; overflow: hidden; margin-top: 16px; border: 1px solid #d7dde3; background: #17202a; }
+.replay-player-error { display: grid; min-height: 180px; place-items: center; padding: 20px; color: #fff; background: #5a2e2a; }
 @media (max-width: 760px) {
   main { width: min(100% - 28px, 1180px); padding-top: 28px; }
   .page-header, .section-heading { align-items: start; flex-direction: column; }
@@ -108,4 +120,5 @@ code { display: block; max-width: 280px; overflow: hidden; color: #47545e; font-
   .source-map-target { align-items: start; flex-direction: column; gap: 4px; }
   .resolution-panel .section-heading { align-items: start; }
   .performance-grid { grid-template-columns: 1fr; }
+  .replay-layout { grid-template-columns: 1fr; }
 }
