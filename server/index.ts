@@ -9,6 +9,7 @@ import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js"
 import { isParseableSourceMap } from "./sourceMaps.js";
 import { SQLiteReportStore, type SourceMapUpload } from "./store.js";
 import type { ErrorStatus } from "./errorIssues.js";
+import type { PerformanceMetricName } from "./performance.js";
 
 export interface ReportServerOptions {
     logger?: ((report: unknown) => void) | undefined;
@@ -381,6 +382,15 @@ export function createReportServer(
                     url.searchParams.get("eventType") ??
                     undefined,
             };
+            const pageUrl = url.searchParams.get("pageUrl") ?? undefined;
+            const performanceQuery = {
+                appId: query.appId,
+                from: query.from,
+                to: query.to,
+                pageUrl,
+                minDuration: parseNumber("minDuration"),
+                maxDuration: parseNumber("maxDuration"),
+            };
             const errorQuery = {
                 ...query,
                 subType: url.searchParams.get("subType") ?? undefined,
@@ -392,6 +402,53 @@ export function createReportServer(
             };
             if (url.pathname === "/api/v1/apps") {
                 sendJson(response, 200, store.apps());
+                return;
+            }
+            if (
+                url.pathname === "/api/v1/performance" ||
+                url.pathname === "/api/v1/performance/metrics"
+            ) {
+                const metricNames = (url.searchParams.get("metrics") ?? "")
+                    .split(",")
+                    .filter(Boolean) as PerformanceMetricName[];
+                sendJson(response, 200, {
+                    metrics: store.performanceMetrics({
+                        ...performanceQuery,
+                        metrics: metricNames.length ? metricNames : undefined,
+                    }),
+                });
+                return;
+            }
+            if (url.pathname === "/api/v1/performance/requests") {
+                const status = parseNumber("status");
+                sendJson(response, 200, store.performanceRequests({
+                    ...performanceQuery,
+                    keyword: url.searchParams.get("keyword") ??
+                        url.searchParams.get("search") ?? undefined,
+                    status,
+                    sort: (url.searchParams.get("sort") ?? undefined) as
+                        "duration" | "status" | "url" | undefined,
+                    order: (url.searchParams.get("order") ?? undefined) as
+                        "asc" | "desc" | undefined,
+                    page,
+                    pageSize,
+                }));
+                return;
+            }
+            if (url.pathname === "/api/v1/performance/resources") {
+                sendJson(response, 200, store.performanceResources({
+                    ...performanceQuery,
+                    resourceType: url.searchParams.get("resourceType") ??
+                        url.searchParams.get("type") ?? undefined,
+                    keyword: url.searchParams.get("keyword") ??
+                        url.searchParams.get("search") ?? undefined,
+                    sort: (url.searchParams.get("sort") ?? undefined) as
+                        "duration" | "url" | undefined,
+                    order: (url.searchParams.get("order") ?? undefined) as
+                        "asc" | "desc" | undefined,
+                    page,
+                    pageSize,
+                }));
                 return;
             }
             if (url.pathname === "/api/v1/source-maps") {

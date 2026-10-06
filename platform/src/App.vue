@@ -20,6 +20,29 @@ interface Overview {
   summary: { total: number; byType: Array<{ type: string; count: number }> };
   events: { items: EventItem[]; total: number; page: number; pageSize: number };
 }
+type MetricName = "first-paint" | "first-contentful-paint" | "largest-contentful-paint" | "load";
+interface PerformanceMetric {
+  metric: MetricName;
+  sampleCount: number;
+  p50: number | null;
+  p75: number | null;
+  p95: number | null;
+  trend: Array<{ bucket: number; sampleCount: number; p50: number | null }>;
+  pages: Array<{ pageUrl: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
+}
+interface PerformanceRequest {
+  id: number; timestamp: number; pageUrl: string; url: string; method: string;
+  status: number; duration: number; success: boolean; subType: "fetch" | "xhr";
+}
+interface PerformanceResource {
+  id: number; timestamp: number; pageUrl: string; url: string; resourceType: string;
+  duration: number; transferSize: number; resourceSize: number;
+}
+interface PerformanceState {
+  metrics: PerformanceMetric[];
+  requests: { items: PerformanceRequest[]; total: number; page: number; pageSize: number };
+  resources: { items: PerformanceResource[]; total: number; page: number; pageSize: number };
+}
 interface ResolvedFrame {
   functionName?: string;
   fileName?: string;
@@ -75,7 +98,7 @@ const selectedAppId = ref("");
 const from = ref("");
 const to = ref("");
 const selectedType = ref("");
-const view = ref<"overview" | "errors" | "sourceMaps">("overview");
+const view = ref<"overview" | "performance" | "errors" | "sourceMaps">("overview");
 const sourceMapRelease = ref("");
 const sourceMapGeneratedFile = ref("");
 const sourceMaps = ref<SourceMapRecord[]>([]);
@@ -93,6 +116,17 @@ const selectedError = ref<ErrorDetail | null>(null);
 const errorPage = ref(1);
 const errorLoading = ref(false);
 const overview = ref<Overview | null>(null);
+const performance = ref<PerformanceState | null>(null);
+const performanceKeyword = ref("");
+const performanceResourceType = ref("");
+const performancePageUrl = ref("");
+const performanceStatus = ref("");
+const performanceSort = ref<"duration" | "status" | "url">("duration");
+const performanceOrder = ref<"asc" | "desc">("desc");
+const performanceMinDuration = ref("");
+const performanceMaxDuration = ref("");
+const performancePage = ref(1);
+const performanceLoading = ref(false);
 const loading = ref(true);
 const error = ref("");
 const refreshingEvents = ref(false);
@@ -199,6 +233,60 @@ async function loadErrors(): Promise<void> {
     errorLoading.value = false;
     loading.value = false;
   }
+}
+
+function performanceQueryString(): string {
+  const params = new URLSearchParams();
+  if (selectedAppId.value) params.set("appId", selectedAppId.value);
+  if (from.value) params.set("from", String(new Date(`${from.value}T00:00:00`).getTime()));
+  if (to.value) params.set("to", String(new Date(`${to.value}T23:59:59.999`).getTime()));
+  if (performancePageUrl.value.trim()) params.set("pageUrl", performancePageUrl.value.trim());
+  return params.toString();
+}
+
+async function loadPerformance(): Promise<void> {
+  performanceLoading.value = true;
+  loading.value = true;
+  error.value = "";
+  const query = performanceQueryString();
+  const listQuery = new URLSearchParams(query);
+  listQuery.set("keyword", performanceKeyword.value);
+  listQuery.set("resourceType", performanceResourceType.value);
+  if (performanceStatus.value) listQuery.set("status", performanceStatus.value);
+  listQuery.set("sort", performanceSort.value);
+  listQuery.set("order", performanceOrder.value);
+  if (performanceMinDuration.value) listQuery.set("minDuration", performanceMinDuration.value);
+  if (performanceMaxDuration.value) listQuery.set("maxDuration", performanceMaxDuration.value);
+  listQuery.set("page", String(performancePage.value));
+  listQuery.set("pageSize", "10");
+  try {
+    const [metricsResponse, requestsResponse, resourcesResponse] = await Promise.all([
+      fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
+      fetch(`${apiUrl}/api/v1/performance/requests?${listQuery}`),
+      fetch(`${apiUrl}/api/v1/performance/resources?${listQuery}`),
+    ]);
+    if (!metricsResponse.ok || !requestsResponse.ok || !resourcesResponse.ok) {
+      throw new Error("性能数据加载失败");
+    }
+    performance.value = {
+      metrics: ((await metricsResponse.json()) as { metrics: PerformanceMetric[] }).metrics,
+      requests: await requestsResponse.json() as PerformanceState["requests"],
+      resources: await resourcesResponse.json() as PerformanceState["resources"],
+    };
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "性能数据加载失败";
+  } finally {
+    loading.value = false;
+    performanceLoading.value = false;
+  }
+}
+
+function metricLabel(metric: MetricName): string {
+  return { "first-paint": "FP", "first-contentful-paint": "FCP", "largest-contentful-paint": "LCP", load: "Load" }[metric];
+}
+
+function duration(value: number | null): string {
+  return value === null ? "-" : `${Math.round(value)} ms`;
 }
 
 async function loadSourceMaps(): Promise<void> {
@@ -313,6 +401,11 @@ async function initialize(): Promise<void> {
 watch([selectedAppId, from, to, selectedType], () => {
   if (apps.value.length > 0 && view.value === "overview") void loadOverview();
 });
+watch([selectedAppId, from, to, performanceKeyword, performanceResourceType, performancePageUrl,
+  performanceStatus, performanceSort, performanceOrder, performanceMinDuration, performanceMaxDuration,
+  performancePage], () => {
+  if (apps.value.length > 0 && view.value === "performance") void loadPerformance();
+});
 watch([selectedAppId, from, to, errorStatus, errorSubType, errorSearch, errorPage], () => {
   if (apps.value.length > 0 && view.value === "errors") void loadErrors();
 });
@@ -324,6 +417,7 @@ onMounted(() => {
   void initialize();
   refreshTimer = window.setInterval(() => {
     if (view.value === "errors") void loadErrors();
+    else if (view.value === "performance") void loadPerformance();
     else if (view.value === "sourceMaps") void loadSourceMaps();
     else void loadOverview();
   }, 30_000);
@@ -341,13 +435,14 @@ onUnmounted(() => {
         <h1>监控总览</h1>
         <p class="subtitle">{{ selectedApp?.projectName || "选择一个应用查看上报事件" }}</p>
       </div>
-      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
+      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'performance' ? loadPerformance() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
         <span aria-hidden="true">↻</span> 刷新事件
       </button>
     </header>
 
     <nav class="view-tabs" aria-label="监控模块">
       <button type="button" :class="{ active: view === 'overview' }" @click="view = 'overview'; void loadOverview()">总览</button>
+      <button type="button" :class="{ active: view === 'performance' }" @click="view = 'performance'; void loadPerformance()">性能分析</button>
       <button type="button" :class="{ active: view === 'errors' }" @click="view = 'errors'; void loadErrors()">错误事项</button>
       <button type="button" :class="{ active: view === 'sourceMaps' }" @click="view = 'sourceMaps'; void loadSourceMaps()">Source Map</button>
     </nav>
@@ -373,7 +468,7 @@ onUnmounted(() => {
       </label>
     </section>
 
-    <p v-if="loading || errorLoading" class="state">正在加载监控数据...</p>
+    <p v-if="loading || errorLoading || performanceLoading" class="state">正在加载监控数据...</p>
     <p v-else-if="error" class="state state-error" role="alert">{{ error }}</p>
     <template v-else-if="view === 'overview' && overview">
       <section class="summary-grid" aria-label="统计摘要">
@@ -403,6 +498,64 @@ onUnmounted(() => {
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+    </template>
+    <template v-else-if="view === 'performance' && performance">
+      <section class="performance-section" aria-labelledby="performance-title">
+        <div class="section-heading"><div><p class="eyebrow">Web vitals</p><h2 id="performance-title">页面加载性能</h2></div></div>
+        <div class="summary-grid">
+          <article v-for="metric in performance.metrics" :key="metric.metric" class="metric">
+            <span>{{ metricLabel(metric.metric) }} · {{ metric.sampleCount }} 个样本</span>
+            <strong>{{ duration(metric.p50) }}</strong>
+            <small>P75 {{ duration(metric.p75) }} · P95 {{ duration(metric.p95) }}</small>
+          </article>
+        </div>
+        <div class="performance-grid">
+          <article v-for="metric in performance.metrics" :key="`${metric.metric}-detail`" class="performance-panel">
+            <div class="section-heading"><h3>{{ metricLabel(metric.metric) }} 趋势</h3><span>{{ metric.sampleCount }} 个样本</span></div>
+            <p v-if="!metric.trend.length" class="state">当前筛选条件下没有数据</p>
+            <table v-else><thead><tr><th>时间</th><th>样本</th><th>P50</th></tr></thead>
+              <tbody><tr v-for="point in metric.trend" :key="point.bucket"><td>{{ formatTime(point.bucket) }}</td><td>{{ point.sampleCount }}</td><td>{{ duration(point.p50) }}</td></tr></tbody>
+            </table>
+            <h4>页面排行</h4>
+            <p v-if="!metric.pages.length" class="result-count">暂无页面数据</p>
+            <ol v-else class="rank-list"><li v-for="page in metric.pages.slice(0, 5)" :key="page.pageUrl"><span :title="page.pageUrl">{{ page.pageUrl }}</span><strong>{{ duration(page.p50) }}</strong></li></ol>
+          </article>
+        </div>
+      </section>
+      <section class="performance-section">
+        <div class="section-heading"><div><p class="eyebrow">Network</p><h2>慢请求与慢资源</h2></div></div>
+        <div class="filters performance-filters">
+          <label>页面 URL <input v-model="performancePageUrl" type="search" placeholder="精确匹配页面"></label>
+          <label>URL 关键词 <input v-model="performanceKeyword" type="search" placeholder="筛选请求或资源"></label>
+          <label>请求状态 <input v-model="performanceStatus" inputmode="numeric" placeholder="例如 500"></label>
+          <label>资源类型 <input v-model="performanceResourceType" placeholder="例如 script"></label>
+          <label>最短耗时 <input v-model="performanceMinDuration" type="number" min="0" placeholder="毫秒"></label>
+          <label>最长耗时 <input v-model="performanceMaxDuration" type="number" min="0" placeholder="毫秒"></label>
+          <label>排序
+            <select v-model="performanceSort">
+              <option value="duration">按耗时</option><option value="status">按状态</option><option value="url">按 URL</option>
+            </select>
+          </label>
+          <label>顺序
+            <select v-model="performanceOrder"><option value="desc">降序</option><option value="asc">升序</option></select>
+          </label>
+        </div>
+        <div class="performance-grid">
+          <article class="performance-panel"><h3>Fetch / XHR <span class="result-count">{{ performance.requests.total }} 条</span></h3>
+            <p v-if="!performance.requests.items.length" class="state">当前筛选条件下没有请求</p>
+            <div v-else class="table-wrap"><table><thead><tr><th>URL</th><th>状态</th><th>耗时</th></tr></thead><tbody><tr v-for="request in performance.requests.items" :key="request.id"><td class="truncate" :title="request.url">{{ request.url }}</td><td>{{ request.status }}</td><td>{{ duration(request.duration) }}</td></tr></tbody></table></div>
+          </article>
+          <article class="performance-panel"><h3>资源 <span class="result-count">{{ performance.resources.total }} 条</span></h3>
+            <p v-if="!performance.resources.items.length" class="state">当前筛选条件下没有资源</p>
+            <div v-else class="table-wrap"><table><thead><tr><th>URL</th><th>类型</th><th>耗时</th></tr></thead><tbody><tr v-for="resource in performance.resources.items" :key="resource.id"><td class="truncate" :title="resource.url">{{ resource.url }}</td><td>{{ resource.resourceType }}</td><td>{{ duration(resource.duration) }}</td></tr></tbody></table></div>
+          </article>
+        </div>
+        <div v-if="performance.requests.total > performance.requests.pageSize || performance.resources.total > performance.resources.pageSize" class="pagination">
+          <button type="button" :disabled="performancePage <= 1" @click="performancePage--">上一页</button>
+          <span>第 {{ performancePage }} 页</span>
+          <button type="button" :disabled="performancePage * Math.max(performance.requests.pageSize, performance.resources.pageSize) >= Math.max(performance.requests.total, performance.resources.total)" @click="performancePage++">下一页</button>
         </div>
       </section>
     </template>

@@ -6,6 +6,18 @@ import {
     getErrorIdentity,
     type ErrorStatus,
 } from "./errorIssues.js";
+import {
+    summarizeMetrics,
+    type PerformanceEventRow,
+    type PerformanceFilter,
+    type PerformanceListResult,
+    type PerformanceMetricQuery,
+    type PerformanceMetricPoint,
+    type PerformanceRequest,
+    type RequestQuery,
+    type PerformanceResource,
+    type ResourceQuery,
+} from "./performance.js";
 
 export interface StoredEvent {
     id: number;
@@ -613,6 +625,125 @@ export class SQLiteReportStore {
             GROUP BY type ORDER BY count DESC, type ASC
         `).all(...filter.parameters) as Array<{ type: string; count: number }>;
         return { total: result.total, byType: rows };
+    }
+
+    private performanceEvents(
+        query: PerformanceFilter,
+        subTypes?: string[],
+    ): PerformanceEventRow[] {
+        const conditions = ["type = 'performance'"];
+        const parameters: Array<string | number> = [];
+        if (query.appId) {
+            conditions.push("app_id = ?");
+            parameters.push(query.appId);
+        }
+        if (query.from !== undefined) {
+            conditions.push("timestamp >= ?");
+            parameters.push(query.from);
+        }
+        if (query.to !== undefined) {
+            conditions.push("timestamp <= ?");
+            parameters.push(query.to);
+        }
+        if (subTypes?.length) {
+            conditions.push(`sub_type IN (${subTypes.map(() => "?").join(", ")})`);
+            parameters.push(...subTypes);
+        }
+        const rows = this.database.prepare(`
+            SELECT id, timestamp, page_url AS pageUrl, sub_type AS subType, data_json AS data
+            FROM events WHERE ${conditions.join(" AND ")}
+            ORDER BY timestamp DESC, id DESC
+        `).all(...parameters) as Array<PerformanceEventRow & { data: string }>;
+        return rows
+            .map((row) => {
+                const data = parse<Record<string, unknown>>(row.data);
+                return {
+                    ...row,
+                    pageUrl: typeof data.pageUrl === "string" ? data.pageUrl : row.pageUrl,
+                    data,
+                };
+            })
+            .filter((row) => {
+                if (query.pageUrl && row.pageUrl !== query.pageUrl) return false;
+                if (query.minDuration === undefined && query.maxDuration === undefined) return true;
+                const duration = typeof row.data.duration === "number" ? row.data.duration : undefined;
+                return duration !== undefined &&
+                    (query.minDuration === undefined || duration >= query.minDuration) &&
+                    (query.maxDuration === undefined || duration <= query.maxDuration);
+            });
+    }
+
+    performanceMetrics(query: PerformanceMetricQuery): PerformanceMetricPoint[] {
+        return summarizeMetrics(this.performanceEvents(query), query);
+    }
+
+    performanceRequests(query: RequestQuery): PerformanceListResult<PerformanceRequest> {
+        const rows = this.performanceEvents(query, ["fetch", "xhr"])
+            .flatMap((row) => {
+                const url = typeof row.data.url === "string" ? row.data.url : "";
+                if (query.keyword && !url.toLowerCase().includes(query.keyword.toLowerCase())) return [];
+                const status = typeof row.data.status === "number" ? row.data.status : 0;
+                if (query.status !== undefined && status !== query.status) return [];
+                const duration = typeof row.data.duration === "number" ? row.data.duration : 0;
+                return [{
+                    id: row.id,
+                    timestamp: row.timestamp,
+                    pageUrl: row.pageUrl,
+                    url,
+                    method: typeof row.data.method === "string" ? row.data.method : "",
+                    status,
+                    duration,
+                    success: row.data.success === true,
+                    subType: row.subType as "fetch" | "xhr",
+                }];
+            });
+        const direction = query.order === "asc" ? 1 : -1;
+        rows.sort((left, right) => {
+            const comparison = query.sort === "status"
+                ? left.status - right.status
+                : query.sort === "url"
+                    ? left.url.localeCompare(right.url)
+                    : left.duration - right.duration;
+            return comparison * direction || right.id - left.id;
+        });
+        return this.paginate(rows, query.page, query.pageSize);
+    }
+
+    performanceResources(query: ResourceQuery): PerformanceListResult<PerformanceResource> {
+        const rows = this.performanceEvents(query, ["resource"])
+            .flatMap((row) => {
+                const url = typeof row.data.name === "string" ? row.data.name : "";
+                const resourceType = typeof row.data.sourceType === "string" ? row.data.sourceType : "";
+                if (query.keyword && !url.toLowerCase().includes(query.keyword.toLowerCase())) return [];
+                if (query.resourceType && resourceType !== query.resourceType) return [];
+                return [{
+                    id: row.id,
+                    timestamp: row.timestamp,
+                    pageUrl: row.pageUrl,
+                    url,
+                    resourceType,
+                    duration: typeof row.data.duration === "number" ? row.data.duration : 0,
+                    transferSize: typeof row.data.transferSize === "number" ? row.data.transferSize : 0,
+                    resourceSize: typeof row.data.resourceSize === "number" ? row.data.resourceSize : 0,
+                }];
+            });
+        const direction = query.order === "asc" ? 1 : -1;
+        rows.sort((left, right) => {
+            const comparison = query.sort === "url"
+                ? left.url.localeCompare(right.url)
+                : left.duration - right.duration;
+            return comparison * direction || right.id - left.id;
+        });
+        return this.paginate(rows, query.page, query.pageSize);
+    }
+
+    private paginate<T>(items: T[], page: number, pageSize: number): PerformanceListResult<T> {
+        return {
+            items: items.slice((page - 1) * pageSize, page * pageSize),
+            total: items.length,
+            page,
+            pageSize,
+        };
     }
 
     close(): void {
