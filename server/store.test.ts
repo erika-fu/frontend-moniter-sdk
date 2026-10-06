@@ -159,4 +159,41 @@ describe("SQLiteReportStore", () => {
         }).total).toBe(1);
         second.close();
     });
+
+    it("cleans expired data across normalized and raw storage idempotently", () => {
+        const path = `/tmp/monitoring-${Date.now()}-${Math.random()}.sqlite`;
+        paths.push(path);
+        const store = new SQLiteReportStore(path);
+        store.save(errorReport("old", 1_000));
+        store.save(errorReport("new", 10_000, { message: "new error" }));
+        store.save({
+            ...report("replay-old"),
+            timestamp: 1_000,
+            data: [{
+                type: "replay",
+                subType: "event",
+                replayId: "old-replay",
+                sessionId: "session",
+                replayOffset: 0,
+                event: { type: 2, timestamp: 1_000 },
+            }],
+        });
+
+        expect(store.cleanupBefore(5_000)).toMatchObject({
+            envelopes: 2,
+            events: 2,
+            errors: 1,
+            replays: 1,
+        });
+        expect(store.queryErrors({ page: 1, pageSize: 10 }).items).toHaveLength(1);
+        expect(store.queryEvents({ page: 1, pageSize: 10 }).total).toBe(1);
+        expect(store.cleanupBefore(5_000)).toEqual({
+            envelopes: 0,
+            events: 0,
+            errors: 0,
+            replays: 0,
+            sourceMaps: 0,
+        });
+        store.close();
+    });
 });

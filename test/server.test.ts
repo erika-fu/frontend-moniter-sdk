@@ -288,7 +288,12 @@ describe("report server", () => {
         });
 
         const reportsResponse = await nativeFetch(`${baseUrl}/reports`);
-        expect(await reportsResponse.json()).toEqual([saved]);
+        expect(await reportsResponse.json()).toMatchObject([{
+            id: "id-stack",
+            data: [{
+                stack: "Error: boom\n    at demo (http://127.0.0.1/app.js:1:1)",
+            }],
+        }]);
         vi.unstubAllGlobals();
     });
 
@@ -452,5 +457,90 @@ describe("report server", () => {
 
         expect(response.status).toBe(404);
         expect(await response.text()).toBe("Not Found");
+    });
+
+    it("only exposes configured origins and redacts sensitive logs", async () => {
+        const { baseUrl, logger } = await startServer(vi.fn(), {
+            corsOrigins: ["http://allowed.test"],
+        });
+        const report = {
+            id: "sensitive",
+            appId: "secure-app",
+            data: [{
+                type: "error",
+                password: "do-not-log",
+                token: "do-not-log",
+                stack: "Error: internal details",
+            }],
+        };
+
+        const denied = await fetch(`${baseUrl}/reportData`, {
+            method: "POST",
+            headers: {
+                origin: "http://denied.test",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(report),
+        });
+        expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+
+        const allowed = await fetch(`${baseUrl}/reportData`, {
+            method: "POST",
+            headers: {
+                origin: "http://allowed.test",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(report),
+        });
+        expect(allowed.headers.get("access-control-allow-origin")).toBe(
+            "http://allowed.test",
+        );
+        expect(logger).toHaveBeenLastCalledWith(expect.objectContaining({
+            ...report,
+            data: [expect.objectContaining({
+                type: "error",
+                password: "[redacted]",
+                token: "[redacted]",
+                stack: "[redacted]",
+            })],
+        }));
+    });
+
+    it("enforces the configured report body limit", async () => {
+        const { baseUrl } = await startServer(vi.fn(), { reportMaxBytes: 32 });
+
+        const response = await fetch(`${baseUrl}/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "too-large", data: ["payload"] }),
+        });
+
+        expect(response.status).toBe(413);
+        expect(await response.json()).toMatchObject({
+            error: "request_too_large",
+        });
+    });
+
+    it("returns a generic error when storage fails", async () => {
+        const { baseUrl } = await startServer(vi.fn(), {
+            store: {
+                save: () => {
+                    throw new Error("database password and stack details");
+                },
+                list: () => [],
+            },
+        });
+
+        const response = await fetch(`${baseUrl}/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "storage-error", data: [] }),
+        });
+
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual({
+            error: "internal_server_error",
+            message: "The monitoring service could not process the request.",
+        });
     });
 });

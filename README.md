@@ -13,9 +13,6 @@ TypeScript SDK for frontend monitoring.
 npm install
 npm run check
 
-cd demo
-npm install
-npm run build
 ```
 
 ## Workspace commands
@@ -35,11 +32,41 @@ npm run dev:server       # http://localhost:9800
 npm run dev:platform     # http://localhost:4175
 npm run dev:demo         # http://localhost:4173
 npm run dev:react-demo   # http://localhost:4174
+npm run cleanup          # 清理超过 RETENTION_DAYS 的 SQLite 数据
 ```
 
 版本化上报入口为 `POST /api/v1/reportData`，合法请求返回 `202 Accepted`。
 `GET /api/v1/health` 可独立验证 API 边界。旧的 `/reportData` 入口在升级期间
 继续可用。
+
+server 默认使用 `server/data/monitoring.sqlite`、端口 `9800` 和 30 天保留期。
+部署时可通过以下环境变量调整：
+
+```bash
+PORT=9800
+REPORT_DB_PATH=./data/monitoring.sqlite
+RETENTION_DAYS=30
+CORS_ORIGINS=http://localhost:4173,http://localhost:4175
+```
+
+`CORS_ORIGINS` 使用逗号分隔的精确 Origin；未设置时为 `*` 以兼容本地 SDK
+示例。server 启动时清理一次，并每天重复清理；`npm run cleanup` 可安全地手动
+重复执行。上报请求默认限制为 1 MiB，Source Map 默认限制为 5 MiB，回放还
+额外限制为 1000 个事件、30 分钟和 5 MiB。
+
+platform 使用 `VITE_SERVER_URL` 指向 server 地址，默认
+`http://localhost:9800`；demo 使用以下变量配置上报：
+
+```bash
+VITE_MONITOR_URL=http://localhost:9800/api/v1/reportData
+VITE_MONITOR_PROJECT=frontend-moniter-sdk-demo
+VITE_MONITOR_APP_ID=vue-demo
+VITE_MONITOR_USER_ID=local-developer
+VITE_MONITOR_RELEASE=demo@0.1.0
+```
+
+完整链路验收可运行 `npm run test:e2e`，会模拟 demo 的版本化信封，并从
+server 提供给 platform 的错误、性能和回放 API 查询结果。
 
 ## Commands
 
@@ -139,13 +166,12 @@ integration is covered by tests.
 The `demo/` directory is an independent Vue application with its own package
 manifest, lock file, TypeScript configuration, Vite configuration, and build
 output. It imports the SDK directly from `src/index.ts`, so SDK source changes
-are reflected without building the package first. Install both the SDK and demo
-dependencies before starting the demo:
+are reflected without building the package first. Root installation includes all
+workspace dependencies:
 
 ```bash
 npm install
-npm install --prefix demo
-npm --prefix demo run dev
+npm run dev:demo
 ```
 
 Then visit `http://localhost:4173/`.

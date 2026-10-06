@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 import { isParseableSourceMap } from "./sourceMaps.js";
 import {
+    DEFAULT_RETENTION_DAYS,
     SQLiteReportStore,
     type SourceMapUpload,
 } from "./store.js";
@@ -19,6 +20,9 @@ export interface ReportServerOptions {
     stackResolution?: StackResolutionOptions | undefined;
     store?: ReportStore | undefined;
     databasePath?: string | undefined;
+    corsOrigins?: string[] | undefined;
+    reportMaxBytes?: number | undefined;
+    sourceMapMaxBytes?: number | undefined;
 }
 
 export interface ReportStore {
@@ -44,8 +48,8 @@ export class InMemoryReportStore implements ReportStore {
     }
 }
 
+const DEFAULT_CORS_ORIGINS = "*";
 const CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 };
@@ -53,12 +57,61 @@ const REPORT_MAX_BYTES = 1 * 1024 * 1024;
 
 class RequestBodyLimitError extends Error {}
 
+function configuredOrigins(options: ReportServerOptions): string[] {
+    const value = options.corsOrigins ??
+        (process.env.CORS_ORIGINS ?? DEFAULT_CORS_ORIGINS)
+            .split(",")
+            .map((origin) => origin.trim())
+            .filter(Boolean);
+    return value.length ? value : [DEFAULT_CORS_ORIGINS];
+}
+
+function corsHeaders(
+    request: IncomingMessage,
+    origins: string[],
+): Record<string, string> {
+    const origin = request.headers.origin;
+    const allowed = origins.includes("*")
+        ? "*"
+        : origin && origins.includes(origin)
+            ? origin
+            : undefined;
+    return {
+        ...CORS_HEADERS,
+        ...(allowed ? { "Access-Control-Allow-Origin": allowed } : {}),
+        ...(allowed && allowed !== "*" ? { Vary: "Origin" } : {}),
+    };
+}
+
 function parseJson(value: string): unknown {
     try {
         return JSON.parse(value);
     } catch {
         return value;
     }
+}
+
+const SENSITIVE_KEYS = new Set([
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "token",
+    "accessToken",
+    "refreshToken",
+]);
+
+function redactForLog(value: unknown, key?: string): unknown {
+    if (key === "stack" || key === "rawStack") return "[redacted]";
+    if (key && SENSITIVE_KEYS.has(key)) return "[redacted]";
+    if (Array.isArray(value)) return value.map((item) => redactForLog(item));
+    if (!isRecord(value)) return value;
+    return Object.fromEntries(
+        Object.entries(value).map(([entryKey, entryValue]) => [
+            entryKey,
+            redactForLog(entryValue, entryKey),
+        ]),
+    );
 }
 
 async function readRequestBody(
@@ -91,14 +144,17 @@ async function readRequestBody(
 
 const SOURCE_MAP_MAX_BYTES = 5 * 1024 * 1024;
 
-async function readBodyBuffer(request: IncomingMessage): Promise<Buffer> {
+async function readBodyBuffer(
+    request: IncomingMessage,
+    maxBytes = SOURCE_MAP_MAX_BYTES,
+): Promise<Buffer> {
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of request) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         size += buffer.length;
-        if (size > SOURCE_MAP_MAX_BYTES) {
-            throw new Error("source map exceeds the 5 MiB limit.");
+        if (size > maxBytes) {
+            throw new Error(`request body exceeds the ${maxBytes} byte limit.`);
         }
         chunks.push(buffer);
     }
@@ -139,10 +195,11 @@ function multipartFields(
 
 async function parseSourceMapUpload(
     request: IncomingMessage,
+    maxBytes = SOURCE_MAP_MAX_BYTES,
 ): Promise<{ upload?: SourceMapUpload; error?: string; tooLarge?: boolean }> {
     let body: Buffer;
     try {
-        body = await readBodyBuffer(request);
+        body = await readBodyBuffer(request, maxBytes);
     } catch (error) {
         return { error: error instanceof Error ? error.message : "request is too large", tooLarge: true };
     }
@@ -212,9 +269,10 @@ function send(
     response: ServerResponse,
     statusCode: number,
     body = "",
+    headers: Record<string, string> = {},
 ): void {
     response.writeHead(statusCode, {
-        ...CORS_HEADERS,
+        ...headers,
         "Content-Type": "text/plain; charset=utf-8",
     });
     response.end(body);
@@ -224,19 +282,24 @@ function sendJson(
     response: ServerResponse,
     statusCode: number,
     body: unknown,
+    headers: Record<string, string> = {},
 ): void {
     response.writeHead(statusCode, {
-        ...CORS_HEADERS,
+        ...headers,
         "Content-Type": "application/json; charset=utf-8",
     });
     response.end(JSON.stringify(body));
 }
 
-function sendBadRequest(response: ServerResponse, message: string): void {
+function sendBadRequest(
+    response: ServerResponse,
+    message: string,
+    headers: Record<string, string>,
+): void {
     sendJson(response, 400, {
         error: "invalid_report",
         message,
-    });
+    }, headers);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -359,12 +422,17 @@ export function createReportServer(
               )
             : new InMemoryReportStore());
     const stackResolution = options.stackResolution ?? {};
+    const origins = configuredOrigins(options);
+    const reportMaxBytes = options.reportMaxBytes ?? REPORT_MAX_BYTES;
+    const sourceMapMaxBytes = options.sourceMapMaxBytes ?? SOURCE_MAP_MAX_BYTES;
 
-    return createServer(async (request, response) => {
-        const url = new URL(request.url ?? "/", "http://localhost");
+    return createServer((request, response) => {
+        void (async () => {
+            const url = new URL(request.url ?? "/", "http://localhost");
+            const headers = corsHeaders(request, origins);
 
         if (request.method === "OPTIONS") {
-            send(response, 204);
+            send(response, 204, "", headers);
             return;
         }
 
@@ -374,7 +442,7 @@ export function createReportServer(
             request.method === "GET"
         ) {
             const body: HealthResponse = { status: "ok", apiVersion: "v1" };
-            sendJson(response, 200, body);
+            sendJson(response, 200, body, headers);
             return;
         }
 
@@ -418,7 +486,7 @@ export function createReportServer(
                     "lastSeen" | "firstSeen" | "count" | undefined,
             };
             if (url.pathname === "/api/v1/apps") {
-                sendJson(response, 200, store.apps());
+                sendJson(response, 200, store.apps(), headers);
                 return;
             }
             if (
@@ -433,7 +501,7 @@ export function createReportServer(
                         ...performanceQuery,
                         metrics: metricNames.length ? metricNames : undefined,
                     }),
-                });
+                }, headers);
                 return;
             }
             if (url.pathname === "/api/v1/performance/requests") {
@@ -449,7 +517,7 @@ export function createReportServer(
                         "asc" | "desc" | undefined,
                     page,
                     pageSize,
-                }));
+                }), headers);
                 return;
             }
             if (url.pathname === "/api/v1/performance/resources") {
@@ -465,14 +533,14 @@ export function createReportServer(
                         "asc" | "desc" | undefined,
                     page,
                     pageSize,
-                }));
+                }), headers);
                 return;
             }
             if (url.pathname === "/api/v1/source-maps") {
                 sendJson(response, 200, store.listSourceMaps(
                     url.searchParams.get("appId") ?? undefined,
                     url.searchParams.get("release") ?? undefined,
-                ));
+                ), headers);
                 return;
             }
             if (url.pathname === "/api/v1/errors") {
@@ -480,7 +548,7 @@ export function createReportServer(
                     ...errorQuery,
                     page,
                     pageSize,
-                }));
+                }), headers);
                 return;
             }
             if (url.pathname === "/api/v1/replays") {
@@ -492,7 +560,7 @@ export function createReportServer(
                     to: query.to,
                     page,
                     pageSize,
-                }));
+                }), headers);
                 return;
             }
             if (url.pathname.startsWith("/api/v1/replays/")) {
@@ -504,10 +572,10 @@ export function createReportServer(
                     sendJson(response, 404, {
                         error: "replay_not_found",
                         message: "Replay session was not found.",
-                    });
+                    }, headers);
                     return;
                 }
-                sendJson(response, 200, replay);
+                sendJson(response, 200, replay, headers);
                 return;
             }
             if (url.pathname.startsWith("/api/v1/errors/")) {
@@ -516,13 +584,13 @@ export function createReportServer(
                 );
                 const issue = store.getError(fingerprint);
                 if (!issue) {
-                    send(response, 404, "Not Found");
+                    send(response, 404, "Not Found", headers);
                     return;
                 }
                 sendJson(response, 200, {
                     issue,
                     events: store.errorEvents(fingerprint, page, pageSize),
-                });
+                }, headers);
                 return;
             }
             if (
@@ -535,7 +603,7 @@ export function createReportServer(
                 sendJson(response, 200, {
                     summary: store.summary(query),
                     events,
-                });
+                }, headers);
                 return;
             }
         }
@@ -545,19 +613,19 @@ export function createReportServer(
             store instanceof SQLiteReportStore &&
             url.pathname === "/api/v1/source-maps"
         ) {
-            const parsed = await parseSourceMapUpload(request);
+            const parsed = await parseSourceMapUpload(request, sourceMapMaxBytes);
             if (parsed.tooLarge) {
                 sendJson(response, 413, {
                     error: "source_map_too_large",
                     message: parsed.error,
-                });
+                }, headers);
                 return;
             }
             if (!parsed.upload) {
                 sendJson(response, 400, {
                     error: "invalid_source_map",
                     message: parsed.error,
-                });
+                }, headers);
                 return;
             }
             const result = store.putSourceMap(parsed.upload);
@@ -565,7 +633,7 @@ export function createReportServer(
                 sendJson(response, 409, {
                     error: "source_map_exists",
                     message: "A Source Map already exists for this generated file. Set replace=true to replace it.",
-                });
+                }, headers);
                 return;
             }
             sendJson(response, 201, {
@@ -573,7 +641,7 @@ export function createReportServer(
                 appId: parsed.upload.appId,
                 release: parsed.upload.release,
                 generatedFile: parsed.upload.generatedFile,
-            });
+            }, headers);
             return;
         }
 
@@ -592,14 +660,17 @@ export function createReportServer(
                 status !== "resolved" &&
                 status !== "ignored"
             ) {
-                sendBadRequest(response, "status must be unresolved, resolved, or ignored.");
+                sendJson(response, 400, {
+                    error: "invalid_report",
+                    message: "status must be unresolved, resolved, or ignored.",
+                }, headers);
                 return;
             }
             if (!store.updateErrorStatus(fingerprint, status)) {
-                send(response, 404, "Not Found");
+                send(response, 404, "Not Found", headers);
                 return;
             }
-            sendJson(response, 200, { status });
+            sendJson(response, 200, { status }, headers);
             return;
         }
 
@@ -612,10 +683,10 @@ export function createReportServer(
                     url.pathname === "/api/v1/reports") &&
                 request.method === "GET"
             ) {
-                sendJson(response, 200, store.list());
+                sendJson(response, 200, store.list(), headers);
                 return;
             }
-            send(response, 404, "Not Found");
+            send(response, 404, "Not Found", headers);
             return;
         }
 
@@ -623,12 +694,12 @@ export function createReportServer(
             const data = url.searchParams.get("data");
             if (
                 data !== null &&
-                Buffer.byteLength(data, "utf8") > REPORT_MAX_BYTES
+                Buffer.byteLength(data, "utf8") > reportMaxBytes
             ) {
                 sendJson(response, 413, {
                     error: "request_too_large",
-                    message: `request body exceeds the ${REPORT_MAX_BYTES} byte limit.`,
-                });
+                    message: `request body exceeds the ${reportMaxBytes} byte limit.`,
+                }, headers);
                 return;
             }
             const payload = data === null ? null : parseJson(data);
@@ -637,7 +708,7 @@ export function createReportServer(
                 isVersionedReportEndpoint,
             );
             if (normalized.error) {
-                sendBadRequest(response, normalized.error);
+                sendBadRequest(response, normalized.error, headers);
                 return;
             }
             const report = await resolveReportPayload(
@@ -645,11 +716,11 @@ export function createReportServer(
                 stackResolution,
             );
             store.save(report);
-            logger(report);
+            logger(redactForLog(report));
             if (isVersionedReportEndpoint) {
-                sendJson(response, 202, { status: "accepted" });
+                sendJson(response, 202, { status: "accepted" }, headers);
             } else {
-                send(response, 200, "ok");
+                send(response, 200, "ok", headers);
             }
             return;
         }
@@ -657,20 +728,20 @@ export function createReportServer(
         if (request.method === "POST") {
             let body: unknown;
             try {
-                body = await readRequestBody(request);
+                body = await readRequestBody(request, reportMaxBytes);
             } catch (error) {
                 if (error instanceof RequestBodyLimitError) {
                     sendJson(response, 413, {
                         error: "request_too_large",
                         message: error.message,
-                    });
+                    }, headers);
                     return;
                 }
                 throw error;
             }
             const normalized = normalizeReport(body, isVersionedReportEndpoint);
             if (normalized.error) {
-                sendBadRequest(response, normalized.error);
+                sendBadRequest(response, normalized.error, headers);
                 return;
             }
             const report = await resolveReportPayload(
@@ -702,16 +773,24 @@ export function createReportServer(
                 }
                 throw error;
             }
-            logger(report);
+            logger(redactForLog(report));
             if (isVersionedReportEndpoint) {
-                sendJson(response, 202, { status: "accepted" });
+                sendJson(response, 202, { status: "accepted" }, headers);
             } else {
-                send(response, 200, "ok");
+                send(response, 200, "ok", headers);
             }
             return;
         }
 
-        send(response, 405, "Method Not Allowed");
+            send(response, 405, "Method Not Allowed", headers);
+        })().catch(() => {
+            if (!response.headersSent) {
+                sendJson(response, 500, {
+                    error: "internal_server_error",
+                    message: "The monitoring service could not process the request.",
+                }, corsHeaders(request, origins));
+            }
+        });
     });
 }
 
@@ -721,10 +800,23 @@ if (
     import.meta.url === pathToFileURL(entryPath).href
 ) {
     const port = Number.parseInt(process.env.PORT ?? "9800", 10);
+    const databasePath =
+        process.env.REPORT_DB_PATH ??
+        new URL("./data/monitoring.sqlite", import.meta.url).pathname;
+    const retentionDays = Number.parseInt(
+        process.env.RETENTION_DAYS ?? String(DEFAULT_RETENTION_DAYS),
+        10,
+    );
+    const store = new SQLiteReportStore(databasePath);
+    const cleanup = () => {
+        const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+        store.cleanupBefore(cutoff);
+    };
+    cleanup();
+    const cleanupTimer = setInterval(cleanup, 24 * 60 * 60 * 1000);
+    cleanupTimer.unref();
     const server = createReportServer({
-        databasePath:
-            process.env.REPORT_DB_PATH ??
-            new URL("./data/monitoring.sqlite", import.meta.url).pathname,
+        store,
         stackResolution: {
             sourceMapUrl: (fileUrl) =>
                 fileUrl.startsWith("http://localhost:4173/")

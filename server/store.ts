@@ -171,6 +171,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 const MAX_REPLAY_EVENTS = 1000;
 const MAX_REPLAY_DURATION = 30 * 60 * 1000;
 const MAX_REPLAY_BYTES = 5 * 1024 * 1024;
+export const DEFAULT_RETENTION_DAYS = 30;
 
 function replayData(value: unknown): {
     replayId: string;
@@ -1064,6 +1065,60 @@ export class SQLiteReportStore {
             page,
             pageSize,
         };
+    }
+
+    cleanupBefore(cutoff: number): {
+        envelopes: number;
+        events: number;
+        errors: number;
+        replays: number;
+        sourceMaps: number;
+    } {
+        const transaction = this.database.transaction(() => {
+            const eventIds = this.database.prepare(
+                "SELECT id FROM events WHERE timestamp < ?",
+            ).all(cutoff) as Array<{ id: number }>;
+            const replayIds = this.database.prepare(
+                "SELECT app_id AS appId, replay_id AS replayId FROM replay_sessions WHERE last_seen < ?",
+            ).all(cutoff) as Array<{ appId: string; replayId: string }>;
+            for (const row of eventIds) {
+                this.database.prepare(
+                    "DELETE FROM error_occurrences WHERE event_id = ?",
+                ).run(row.id);
+            }
+            const eventResult = this.database.prepare(
+                "DELETE FROM events WHERE timestamp < ?",
+            ).run(cutoff);
+            const envelopeResult = this.database.prepare(
+                "DELETE FROM envelopes WHERE timestamp < ?",
+            ).run(cutoff);
+            for (const row of replayIds) {
+                this.database.prepare(
+                    "DELETE FROM replay_events WHERE app_id = ? AND replay_id = ?",
+                ).run(row.appId, row.replayId);
+            }
+            const replayResult = this.database.prepare(
+                "DELETE FROM replay_sessions WHERE last_seen < ?",
+            ).run(cutoff);
+            const orphanResult = this.database.prepare(`
+                DELETE FROM error_issues
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM error_occurrences
+                    WHERE error_occurrences.fingerprint = error_issues.fingerprint
+                )
+            `).run();
+            const sourceMapResult = this.database.prepare(
+                "DELETE FROM source_maps WHERE created_at < ?",
+            ).run(cutoff);
+            return {
+                envelopes: envelopeResult.changes,
+                events: eventResult.changes,
+                errors: orphanResult.changes,
+                replays: replayResult.changes,
+                sourceMaps: sourceMapResult.changes,
+            };
+        });
+        return transaction();
     }
 
     close(): void {
