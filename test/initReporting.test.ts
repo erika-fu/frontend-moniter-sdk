@@ -62,10 +62,20 @@ describe("reporting after SDK initialization", () => {
     const requestUrl = new URL(images[0]!.src, "https://demo.example.com");
     expect(JSON.parse(requestUrl.searchParams.get("data") ?? "")).toMatchObject(
       {
+        protocolVersion: 1,
         id: expect.stringMatching(/^id-/),
         projectName: "sdk-demo",
         appId: "vue-demo",
+        sessionId: expect.any(String),
+        timestamp: expect.any(Number),
+        release: "",
         userId: "demo-user",
+        user: { id: "demo-user" },
+        environment: {
+          url: "https://demo.example.com/",
+          userAgent: expect.any(String),
+          language: expect.any(String),
+        },
         data: [
           {
             type: "behavior",

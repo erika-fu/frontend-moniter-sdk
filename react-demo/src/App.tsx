@@ -74,6 +74,7 @@ const reportTypeMeta: Record<
     behavior: { label: "行为", className: "type-behavior" },
     performance: { label: "性能", className: "type-performance" },
     error: { label: "错误", className: "type-error" },
+    replay: { label: "回放", className: "type-replay" },
 };
 const reportTypes = Object.keys(
     reportTypeMeta,

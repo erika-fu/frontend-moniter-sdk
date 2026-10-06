@@ -12,7 +12,7 @@ export default defineConfig({
                 find: /^web-vitals$/,
                 replacement: fileURLToPath(
                     new URL(
-                        "./node_modules/web-vitals/dist/web-vitals.js",
+                        "../node_modules/web-vitals/dist/web-vitals.js",
                         import.meta.url,
                     ),
                 ),

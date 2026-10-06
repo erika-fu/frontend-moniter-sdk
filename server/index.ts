@@ -18,6 +18,11 @@ export interface ReportStore {
     list(): unknown[];
 }
 
+export interface HealthResponse {
+    status: "ok";
+    apiVersion: "v1";
+}
+
 export class InMemoryReportStore implements ReportStore {
     private readonly reports: unknown[] = [];
 
@@ -86,6 +91,99 @@ function sendJson(
     response.end(JSON.stringify(body));
 }
 
+function sendBadRequest(response: ServerResponse, message: string): void {
+    sendJson(response, 400, {
+        error: "invalid_report",
+        message,
+    });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasReportData(value: unknown): value is Record<string, unknown> & {
+    data: unknown[];
+} {
+    return isRecord(value) && Array.isArray(value.data);
+}
+
+function validateVersionedEnvelope(
+    payload: Record<string, unknown>,
+): string | undefined {
+    if (
+        typeof payload.sessionId !== "string" ||
+        payload.sessionId.trim() === ""
+    ) {
+        return "sessionId is required and must be a non-empty string.";
+    }
+    if (
+        typeof payload.timestamp !== "number" ||
+        !Number.isFinite(payload.timestamp)
+    ) {
+        return "timestamp is required and must be a finite number.";
+    }
+    if (typeof payload.release !== "string") {
+        return "release is required and must be a string.";
+    }
+    if (
+        !isRecord(payload.user) ||
+        typeof payload.user.id !== "string"
+    ) {
+        return "user.id is required and must be a string.";
+    }
+    if (
+        !isRecord(payload.environment) ||
+        typeof payload.environment.url !== "string" ||
+        typeof payload.environment.userAgent !== "string" ||
+        typeof payload.environment.language !== "string"
+    ) {
+        return "environment must include url, userAgent, and language strings.";
+    }
+    return undefined;
+}
+
+function normalizeReport(
+    payload: unknown,
+    requireVersionedEnvelope: boolean,
+): { report: unknown; error?: string } {
+    if (!hasReportData(payload)) {
+        return {
+            report: payload,
+            error: "Report must be an object with a data array.",
+        };
+    }
+
+    const protocolVersion = payload.protocolVersion;
+    const hasVersion = protocolVersion !== undefined;
+    if (hasVersion && protocolVersion !== 1) {
+        return {
+            report: payload,
+            error: "Unsupported protocolVersion. Expected 1.",
+        };
+    }
+
+    const appId = payload.appId;
+    if (
+        (requireVersionedEnvelope || hasVersion) &&
+        (typeof appId !== "string" || appId.trim() === "")
+    ) {
+        return {
+            report: payload,
+            error: "appId is required and must be a non-empty string.",
+        };
+    }
+    if (hasVersion) {
+        const error = validateVersionedEnvelope(payload);
+        if (error) {
+            return { report: payload, error };
+        }
+    }
+
+    // Keep the legacy shape intact for existing SDK clients and consumers.
+    return { report: payload };
+}
+
 async function resolveReportPayload(
     payload: unknown,
     options: StackResolutionOptions,
@@ -122,8 +220,25 @@ export function createReportServer(
             return;
         }
 
-        if (url.pathname !== "/reportData") {
-            if (url.pathname === "/reports" && request.method === "GET") {
+        if (
+            (url.pathname === "/health" ||
+                url.pathname === "/api/v1/health") &&
+            request.method === "GET"
+        ) {
+            const body: HealthResponse = { status: "ok", apiVersion: "v1" };
+            sendJson(response, 200, body);
+            return;
+        }
+
+        const isVersionedReportEndpoint =
+            url.pathname === "/api/v1/reportData";
+        const isLegacyReportEndpoint = url.pathname === "/reportData";
+        if (!isVersionedReportEndpoint && !isLegacyReportEndpoint) {
+            if (
+                (url.pathname === "/reports" ||
+                    url.pathname === "/api/v1/reports") &&
+                request.method === "GET"
+            ) {
                 sendJson(response, 200, store.list());
                 return;
             }
@@ -133,24 +248,49 @@ export function createReportServer(
 
         if (request.method === "GET") {
             const data = url.searchParams.get("data");
+            const payload = data === null ? null : parseJson(data);
+            const normalized = normalizeReport(
+                payload,
+                isVersionedReportEndpoint,
+            );
+            if (normalized.error) {
+                sendBadRequest(response, normalized.error);
+                return;
+            }
             const report = await resolveReportPayload(
-                data === null ? null : parseJson(data),
+                normalized.report,
                 stackResolution,
             );
             store.save(report);
             logger(report);
-            send(response, 200, "ok");
+            if (isVersionedReportEndpoint) {
+                sendJson(response, 202, { status: "accepted" });
+            } else {
+                send(response, 200, "ok");
+            }
             return;
         }
 
         if (request.method === "POST") {
-            const report = await resolveReportPayload(
+            const normalized = normalizeReport(
                 await readRequestBody(request),
+                isVersionedReportEndpoint,
+            );
+            if (normalized.error) {
+                sendBadRequest(response, normalized.error);
+                return;
+            }
+            const report = await resolveReportPayload(
+                normalized.report,
                 stackResolution,
             );
             store.save(report);
             logger(report);
-            send(response, 200, "ok");
+            if (isVersionedReportEndpoint) {
+                sendJson(response, 202, { status: "accepted" });
+            } else {
+                send(response, 200, "ok");
+            }
             return;
         }
 

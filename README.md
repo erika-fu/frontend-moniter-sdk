@@ -18,6 +18,29 @@ npm install
 npm run build
 ```
 
+## Workspace commands
+
+SDK、server、platform 和 demo 通过 npm workspaces 管理：
+
+```bash
+npm run typecheck:all
+npm test
+npm run build:all
+```
+
+各应用可以独立启动：
+
+```bash
+npm run dev:server       # http://localhost:9800
+npm run dev:platform     # http://localhost:4175
+npm run dev:demo         # http://localhost:4173
+npm run dev:react-demo   # http://localhost:4174
+```
+
+版本化上报入口为 `POST /api/v1/reportData`，合法请求返回 `202 Accepted`。
+`GET /api/v1/health` 可独立验证 API 边界。旧的 `/reportData` 入口在升级期间
+继续可用。
+
 ## Commands
 
 - `npm run build` creates minified ESM, CommonJS, IIFE, and bundled declarations

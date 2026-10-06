@@ -1,5 +1,6 @@
 {
   "name": "frontend-moniter-sdk",
+  "private": true,
   "version": "0.1.2",
   "description": "Frontend monitoring SDK.",
   "license": "MIT",
@@ -22,14 +23,34 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:server": "npm --workspace server run build",
+    "build:platform": "npm --workspace platform run build",
+    "build:demo": "npm --workspace demo run build",
+    "build:react-demo": "npm --workspace react-demo run build",
+    "build:all": "npm run build && npm run build:server && npm run build:platform && npm run build:demo && npm run build:react-demo",
+    "dev:server": "npm --workspace server run dev",
+    "dev:platform": "npm --workspace platform run dev",
+    "dev:demo": "npm --workspace demo run dev",
+    "dev:react-demo": "npm --workspace react-demo run dev",
     "server": "tsx server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build",
+    "typecheck:server": "npm --workspace server run typecheck",
+    "typecheck:platform": "npm --workspace platform run typecheck",
+    "typecheck:demo": "npm --workspace demo run typecheck",
+    "typecheck:react-demo": "npm --workspace react-demo run typecheck",
+    "typecheck:all": "npm run typecheck && npm run typecheck:server && npm run typecheck:platform && npm run typecheck:demo && npm run typecheck:react-demo",
+    "check": "npm run typecheck:all && npm test && npm run build:all",
     "prepublishOnly": "npm run check"
   },
   "sideEffects": false,
+  "workspaces": [
+    "demo",
+    "platform",
+    "react-demo",
+    "server"
+  ],
   "dependencies": {
     "error-stack-parser": "^2.1.4",
     "rrweb": "^2.1.7",

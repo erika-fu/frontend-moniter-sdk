@@ -40,6 +40,69 @@ async function startServer(
 }
 
 describe("report server", () => {
+    it("exposes the versioned health boundary", async () => {
+        const { baseUrl } = await startServer();
+
+        const response = await fetch(`${baseUrl}/api/v1/health`);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+            status: "ok",
+            apiVersion: "v1",
+        });
+    });
+
+    it("accepts a versioned envelope with a stable app id", async () => {
+        const { baseUrl, logger } = await startServer();
+        const report = {
+            protocolVersion: 1,
+            id: "id-v1",
+            projectName: "demo",
+            appId: "demo-web",
+            sessionId: "session-1",
+            timestamp: Date.now(),
+            release: "demo@1.0.0",
+            userId: "user-1",
+            user: { id: "user-1" },
+            environment: {
+                url: "https://demo.example",
+                userAgent: "test",
+                language: "zh-CN",
+            },
+            data: [{ type: "error", message: "boom" }],
+        };
+
+        const response = await fetch(`${baseUrl}/api/v1/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+        });
+
+        expect(response.status).toBe(202);
+        expect(await response.json()).toEqual({ status: "accepted" });
+        expect(logger).toHaveBeenCalledWith(report);
+    });
+
+    it("rejects malformed versioned reports with a client error", async () => {
+        const { baseUrl, logger } = await startServer();
+
+        const response = await fetch(`${baseUrl}/api/v1/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                protocolVersion: 1,
+                data: [],
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({
+            error: "invalid_report",
+            message: "appId is required and must be a non-empty string.",
+        });
+        expect(logger).not.toHaveBeenCalled();
+    });
+
     it("accepts a JSON report from the SDK", async () => {
         const { baseUrl, logger } = await startServer();
         const report = {

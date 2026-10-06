@@ -13,10 +13,22 @@ export {
 } from "./config.js";
 
 export interface ReportEnvelope<T = unknown> {
+    protocolVersion: 1;
     id: string;
     projectName: string;
     appId: string;
+    sessionId: string;
+    timestamp: number;
+    release: string;
     userId: string;
+    user: {
+        id: string;
+    };
+    environment: {
+        url: string;
+        userAgent: string;
+        language: string;
+    };
     data: T;
 }
 
@@ -24,6 +36,7 @@ type ReportCallback<T> = (data: T) => void;
 
 let lifecycleWindow: Window | undefined;
 const reportListeners = new Set<(data: unknown) => void>();
+let sessionId = "";
 
 // SDK 安装前保存原始 XHR 方法，避免监控 XHR 包装器再次捕获上报请求。
 const originalOpen =
@@ -42,15 +55,45 @@ function generateUniqueId(): string {
     return `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function getSessionId(): string {
+    if (sessionId) {
+        return sessionId;
+    }
+
+    const randomUuid = globalThis.crypto?.randomUUID;
+    sessionId =
+        typeof randomUuid === "function"
+            ? randomUuid.call(globalThis.crypto)
+            : generateUniqueId();
+    return sessionId;
+}
+
 /**
  * 将采集数据包装为统一的上报载荷。
  */
 function createEnvelope<T>(data: T): ReportEnvelope<T> {
+    const browserWindow =
+        typeof window === "undefined" ? undefined : window;
+    const browserNavigator =
+        typeof navigator === "undefined" ? undefined : navigator;
+
     return {
+        protocolVersion: 1,
         id: generateUniqueId(),
         projectName: config.projectName,
         appId: config.appId,
+        sessionId: getSessionId(),
+        timestamp: Date.now(),
+        release: config.release,
         userId: config.userId,
+        user: {
+            id: config.userId,
+        },
+        environment: {
+            url: browserWindow?.location?.href ?? "",
+            userAgent: browserNavigator?.userAgent ?? "",
+            language: browserNavigator?.language ?? "",
+        },
         data,
     };
 }

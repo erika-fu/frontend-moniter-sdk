@@ -8,7 +8,7 @@ import "./style.css";
 
 const reportUrl =
     import.meta.env.VITE_MONITOR_URL ??
-    "http://localhost:9800/reportData";
+    "http://localhost:9800/api/v1/reportData";
 
 frontendMonitor.init({
     url: reportUrl,
