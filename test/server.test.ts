@@ -55,6 +55,61 @@ async function stopServer(
 }
 
 describe("report server", () => {
+    function sourceMap() {
+        return {
+            version: 3,
+            file: "app.js",
+            sourceRoot: "",
+            sources: ["src/demo.ts"],
+            names: [],
+            mappings: "AAAA",
+        };
+    }
+
+    async function uploadMap(
+        baseUrl: string,
+        values: Record<string, unknown>,
+    ): Promise<Response> {
+        return fetch(`${baseUrl}/api/v1/source-maps`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(values),
+        });
+    }
+
+    async function ingestStack(
+        baseUrl: string,
+        id: string,
+        release: string,
+        file = "app.js",
+    ): Promise<void> {
+        await fetch(`${baseUrl}/api/v1/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                protocolVersion: 1,
+                id,
+                appId: "maps-app",
+                projectName: "Maps",
+                sessionId: id,
+                timestamp: Date.now(),
+                release,
+                user: { id: "user" },
+                environment: {
+                    url: "/",
+                    userAgent: "test",
+                    language: "zh-CN",
+                },
+                data: [{
+                    type: "error",
+                    subType: "js",
+                    msg: id,
+                    stack: `Error: ${id}\n    at render (http://cdn.test/${file}:1:1)`,
+                }],
+            }),
+        });
+    }
+
     it("exposes the versioned health boundary", async () => {
         const { baseUrl } = await startServer();
 
@@ -257,6 +312,93 @@ describe("report server", () => {
             "Content-Type",
         );
         expect(logger).not.toHaveBeenCalled();
+    });
+
+    it("stores Source Maps by app and release and resolves error details", async () => {
+        const databasePath = `/tmp/monitoring-maps-${Date.now()}-${Math.random()}.sqlite`;
+        const { baseUrl } = await startServer(vi.fn(), { databasePath });
+        const upload = await uploadMap(baseUrl, {
+            appId: "maps-app",
+            release: "1.0.0",
+            generatedFile: "app.js",
+            sourceMap: sourceMap(),
+        });
+        expect(upload.status).toBe(201);
+        expect(await upload.json()).toMatchObject({ status: "created" });
+
+        await ingestStack(baseUrl, "mapped", "1.0.0");
+        const errors = await fetch(`${baseUrl}/api/v1/errors?appId=maps-app`);
+        const issue = (await errors.json()).items[0];
+        expect(issue).toMatchObject({
+            resolutionStatus: "resolved",
+            stackFrames: [{
+                originalFileName: "src/demo.ts",
+                originalLineNumber: 1,
+                originalColumnNumber: 1,
+            }],
+            rawStack: expect.stringContaining("http://cdn.test/app.js"),
+        });
+        expect(issue.rawStack).toContain("Error: mapped");
+        expect(issue.stack).toContain("render@http://cdn.test/app.js@1@1");
+        const details = await (await fetch(
+            `${baseUrl}/api/v1/errors/${issue.fingerprint}`,
+        )).json();
+        expect(details.issue.resolutionStatus).toBe("resolved");
+    });
+
+    it("isolates releases, supports replacement, and exposes stable resolution failures", async () => {
+        const databasePath = `/tmp/monitoring-map-status-${Date.now()}-${Math.random()}.sqlite`;
+        const { baseUrl } = await startServer(vi.fn(), { databasePath });
+        const first = await uploadMap(baseUrl, {
+            appId: "maps-app",
+            release: "1.0.0",
+            generatedFile: "app.js",
+            sourceMap: sourceMap(),
+        });
+        expect(first.status).toBe(201);
+        expect((await uploadMap(baseUrl, {
+            appId: "maps-app",
+            release: "1.0.0",
+            generatedFile: "app.js",
+            sourceMap: sourceMap(),
+        })).status).toBe(409);
+        expect((await uploadMap(baseUrl, {
+            appId: "maps-app",
+            release: "1.0.0",
+            generatedFile: "app.js",
+            sourceMap: { ...sourceMap(), sources: ["src/replaced.ts"] },
+            replace: true,
+        })).status).toBe(201);
+        expect((await (await fetch(
+            `${baseUrl}/api/v1/source-maps?appId=maps-app&release=1.0.0`,
+        )).json())).toEqual([{
+            appId: "maps-app",
+            release: "1.0.0",
+            generatedFile: "app.js",
+        }]);
+
+        await ingestStack(baseUrl, "missing-version", "2.0.0");
+        await ingestStack(baseUrl, "missing-file", "1.0.0", "other.js");
+        const badMap = await uploadMap(baseUrl, {
+            appId: "maps-app",
+            release: "3.0.0",
+            generatedFile: "app.js",
+            sourceMap: { ...sourceMap(), mappings: "!" },
+        });
+        expect(badMap.status).toBe(400);
+
+        const result = await (await fetch(
+            `${baseUrl}/api/v1/errors?appId=maps-app&pageSize=10`,
+        )).json();
+        const statuses = new Map(
+            result.items.map((item: { message: string; resolutionStatus: string }) =>
+                [item.message, item.resolutionStatus],
+            ),
+        );
+        expect(statuses).toEqual(new Map([
+            ["missing-version", "version_not_found"],
+            ["missing-file", "file_not_found"],
+        ]));
     });
 
     it("keeps HTTP-ingested history queryable after a server restart", async () => {

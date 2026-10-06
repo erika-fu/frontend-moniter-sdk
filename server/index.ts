@@ -6,7 +6,8 @@ import {
 } from "node:http";
 import { pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
-import { SQLiteReportStore } from "./store.js";
+import { isParseableSourceMap } from "./sourceMaps.js";
+import { SQLiteReportStore, type SourceMapUpload } from "./store.js";
 import type { ErrorStatus } from "./errorIssues.js";
 
 export interface ReportServerOptions {
@@ -68,6 +69,125 @@ async function readRequestBody(request: IncomingMessage): Promise<unknown> {
     }
 
     return parseJson(body);
+}
+
+const SOURCE_MAP_MAX_BYTES = 5 * 1024 * 1024;
+
+async function readBodyBuffer(request: IncomingMessage): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of request) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += buffer.length;
+        if (size > SOURCE_MAP_MAX_BYTES) {
+            throw new Error("source map exceeds the 5 MiB limit.");
+        }
+        chunks.push(buffer);
+    }
+    return Buffer.concat(chunks);
+}
+
+function multipartFields(
+    body: Buffer,
+    contentType: string,
+): Record<string, Buffer> | undefined {
+    const boundary = contentType.match(/boundary="?([^";]+)"?/i)?.[1];
+    if (!boundary) return undefined;
+    const delimiter = Buffer.from(`--${boundary}`);
+    const fields: Record<string, Buffer> = {};
+    let start = 0;
+    while (true) {
+        const partStart = body.indexOf(delimiter, start);
+        if (partStart < 0) break;
+        const contentStart = partStart + delimiter.length;
+        if (body.subarray(contentStart, contentStart + 2).toString() === "--") break;
+        const headerStart = contentStart + 2;
+        const separator = body.indexOf(Buffer.from("\r\n\r\n"), headerStart);
+        if (separator < 0) break;
+        const headers = body.subarray(headerStart, separator).toString("utf8");
+        const name = headers.match(/name="([^"]+)"/i)?.[1];
+        if (!name) {
+            start = separator + 4;
+            continue;
+        }
+        const next = body.indexOf(delimiter, separator + 4);
+        if (next < 0) break;
+        const valueEnd = next - 2;
+        fields[name] = body.subarray(separator + 4, valueEnd);
+        start = next;
+    }
+    return fields;
+}
+
+async function parseSourceMapUpload(
+    request: IncomingMessage,
+): Promise<{ upload?: SourceMapUpload; error?: string; tooLarge?: boolean }> {
+    let body: Buffer;
+    try {
+        body = await readBodyBuffer(request);
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : "request is too large", tooLarge: true };
+    }
+    const contentType = request.headers["content-type"] ?? "";
+    const fields = contentType.includes("multipart/form-data")
+        ? multipartFields(body, contentType)
+        : undefined;
+    let appId: unknown;
+    let release: unknown;
+    let generatedFile: unknown;
+    let sourceMap: unknown;
+    let replace: unknown;
+    if (fields) {
+        appId = fields.appId?.toString("utf8");
+        release = fields.release?.toString("utf8");
+        generatedFile = fields.generatedFile?.toString("utf8") ??
+            fields.fileName?.toString("utf8");
+        replace = fields.replace?.toString("utf8");
+        const mapText = fields.sourceMap?.toString("utf8") ??
+            fields.map?.toString("utf8") ??
+            fields.file?.toString("utf8");
+        try {
+            sourceMap = mapText === undefined ? undefined : JSON.parse(mapText);
+        } catch {
+            return { error: "sourceMap must be valid JSON." };
+        }
+    } else {
+        const payload = parseJson(body.toString("utf8"));
+        if (!isRecord(payload)) return { error: "request must be a JSON object or multipart form." };
+        appId = payload.appId;
+        release = payload.release;
+        generatedFile = payload.generatedFile ?? payload.fileName;
+        sourceMap = payload.sourceMap ?? payload.map ?? payload.file;
+        replace = payload.replace;
+        if (typeof sourceMap === "string") {
+            try {
+                sourceMap = JSON.parse(sourceMap);
+            } catch {
+                return { error: "sourceMap must be valid JSON." };
+            }
+        }
+    }
+    if (typeof appId !== "string" || appId.trim() === "") {
+        return { error: "appId is required and must be a non-empty string." };
+    }
+    if (typeof release !== "string" || release.trim() === "") {
+        return { error: "release is required and must be a non-empty string." };
+    }
+    if (typeof generatedFile !== "string" || generatedFile.trim() === "") {
+        return { error: "generatedFile is required and must be a non-empty string." };
+    }
+    if (!isParseableSourceMap(sourceMap)) {
+        return { error: "sourceMap must be a valid version 3 source map." };
+    }
+    return {
+        upload: {
+            appId: appId.trim(),
+            release: release.trim(),
+            generatedFile: generatedFile.trim(),
+            sourceMap,
+            replace: replace === true || replace === "true" || replace === "1",
+        },
+    };
 }
 
 function send(
@@ -274,6 +394,13 @@ export function createReportServer(
                 sendJson(response, 200, store.apps());
                 return;
             }
+            if (url.pathname === "/api/v1/source-maps") {
+                sendJson(response, 200, store.listSourceMaps(
+                    url.searchParams.get("appId") ?? undefined,
+                    url.searchParams.get("release") ?? undefined,
+                ));
+                return;
+            }
             if (url.pathname === "/api/v1/errors") {
                 sendJson(response, 200, store.queryErrors({
                     ...errorQuery,
@@ -310,6 +437,43 @@ export function createReportServer(
                 });
                 return;
             }
+        }
+
+        if (
+            request.method === "POST" &&
+            store instanceof SQLiteReportStore &&
+            url.pathname === "/api/v1/source-maps"
+        ) {
+            const parsed = await parseSourceMapUpload(request);
+            if (parsed.tooLarge) {
+                sendJson(response, 413, {
+                    error: "source_map_too_large",
+                    message: parsed.error,
+                });
+                return;
+            }
+            if (!parsed.upload) {
+                sendJson(response, 400, {
+                    error: "invalid_source_map",
+                    message: parsed.error,
+                });
+                return;
+            }
+            const result = store.putSourceMap(parsed.upload);
+            if (result === "exists") {
+                sendJson(response, 409, {
+                    error: "source_map_exists",
+                    message: "A Source Map already exists for this generated file. Set replace=true to replace it.",
+                });
+                return;
+            }
+            sendJson(response, 201, {
+                status: result,
+                appId: parsed.upload.appId,
+                release: parsed.upload.release,
+                generatedFile: parsed.upload.generatedFile,
+            });
+            return;
         }
 
         if (

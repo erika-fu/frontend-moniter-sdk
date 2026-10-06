@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isSourceMap, resolveStack, type SourceMapRecord, type SourceMapResolutionStatus } from "./sourceMaps.js";
 import {
     getErrorIdentity,
     type ErrorStatus,
@@ -51,6 +52,9 @@ export interface ErrorIssue {
     userCount: number;
     pages: string[];
     releases: string[];
+    rawStack: string;
+    stackFrames: Array<Record<string, unknown>>;
+    resolutionStatus: SourceMapResolutionStatus;
 }
 
 export interface ErrorIssueQuery {
@@ -92,6 +96,14 @@ function json(value: unknown): string {
 
 function parse<T>(value: string): T {
     return JSON.parse(value) as T;
+}
+
+export interface SourceMapUpload {
+    appId: string;
+    release: string;
+    generatedFile: string;
+    sourceMap: unknown;
+    replace?: boolean | undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -148,6 +160,9 @@ function issueFromRow(row: Record<string, unknown>): ErrorIssue {
         userCount: Number(row.userCount),
         pages: parse<string[]>(String(row.pages)),
         releases: parse<string[]>(String(row.releases)),
+        rawStack: String(row.rawStack),
+        stackFrames: parse<Array<Record<string, unknown>>>(String(row.stackFrames)),
+        resolutionStatus: row.resolutionStatus as SourceMapResolutionStatus,
     };
 }
 
@@ -219,6 +234,7 @@ export class SQLiteReportStore {
                 sub_type TEXT NOT NULL,
                 message TEXT NOT NULL,
                 stack TEXT NOT NULL,
+                raw_stack TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'unresolved',
                 first_seen INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL,
@@ -235,7 +251,22 @@ export class SQLiteReportStore {
                 ON error_issues(app_id, last_seen DESC);
             CREATE INDEX IF NOT EXISTS error_occurrences_issue
                 ON error_occurrences(fingerprint, event_id DESC);
+            CREATE TABLE IF NOT EXISTS source_maps (
+                app_id TEXT NOT NULL,
+                release TEXT NOT NULL,
+                generated_file TEXT NOT NULL,
+                source_map_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (app_id, release, generated_file)
+            );
         `);
+        try {
+            this.database.exec(
+                "ALTER TABLE error_issues ADD COLUMN raw_stack TEXT NOT NULL DEFAULT ''",
+            );
+        } catch {
+            // Existing databases already have the column.
+        }
     }
 
     save(report: unknown): void {
@@ -298,8 +329,8 @@ export class SQLiteReportStore {
                 if (identity) {
                     this.database.prepare(`
                         INSERT INTO error_issues
-                        (fingerprint, app_id, sub_type, message, stack, first_seen, last_seen, count)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                        (fingerprint, app_id, sub_type, message, stack, raw_stack, first_seen, last_seen, count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
                         ON CONFLICT(fingerprint) DO UPDATE SET
                             first_seen = MIN(first_seen, excluded.first_seen),
                             last_seen = MAX(last_seen, excluded.last_seen),
@@ -310,6 +341,7 @@ export class SQLiteReportStore {
                         item.subType,
                         identity.message,
                         identity.stack,
+                        identity.rawStack,
                         timestamp,
                         timestamp,
                     );
@@ -335,11 +367,23 @@ export class SQLiteReportStore {
         const offset = (query.page - 1) * query.pageSize;
         const rows = this.database.prepare(`
             SELECT i.fingerprint, i.app_id AS appId, i.sub_type AS subType,
-                i.message, i.stack, i.status, i.first_seen AS firstSeen,
+                i.message, i.stack, i.raw_stack AS rawStack, i.status, i.first_seen AS firstSeen,
                 i.last_seen AS lastSeen, i.count,
                 COUNT(DISTINCT o.user_id) AS userCount,
                 json_group_array(DISTINCT o.page_url) AS pages,
-                json_group_array(DISTINCT o.release) AS releases
+                json_group_array(DISTINCT o.release) AS releases,
+                COALESCE((
+                    SELECT latest.release FROM error_occurrences latest
+                    JOIN events latestEvent ON latestEvent.id = latest.event_id
+                    WHERE latest.fingerprint = i.fingerprint
+                    ORDER BY latestEvent.timestamp DESC, latestEvent.id DESC LIMIT 1
+                ), '') AS latestRelease,
+                COALESCE((
+                    SELECT e.data_json FROM events e
+                    JOIN error_occurrences latest ON latest.event_id = e.id
+                    WHERE latest.fingerprint = i.fingerprint
+                    ORDER BY e.timestamp DESC, e.id DESC LIMIT 1
+                ), 'null') AS latestData
             FROM error_issues i
             LEFT JOIN error_occurrences o ON o.fingerprint = i.fingerprint
             WHERE ${filter.where}
@@ -348,7 +392,7 @@ export class SQLiteReportStore {
             LIMIT ? OFFSET ?
         `).all(...filter.parameters, query.pageSize, offset) as Array<Record<string, unknown>>;
         return {
-            items: rows.map(issueFromRow),
+            items: rows.map((row) => this.issueFromRowWithResolution(row)),
             total,
             page: query.page,
             pageSize: query.pageSize,
@@ -358,17 +402,103 @@ export class SQLiteReportStore {
     getError(fingerprint: string): ErrorIssue | undefined {
         const row = this.database.prepare(`
             SELECT i.fingerprint, i.app_id AS appId, i.sub_type AS subType,
-                i.message, i.stack, i.status, i.first_seen AS firstSeen,
+                i.message, i.stack, i.raw_stack AS rawStack, i.status, i.first_seen AS firstSeen,
                 i.last_seen AS lastSeen, i.count,
                 COUNT(DISTINCT o.user_id) AS userCount,
                 json_group_array(DISTINCT o.page_url) AS pages,
-                json_group_array(DISTINCT o.release) AS releases
+                json_group_array(DISTINCT o.release) AS releases,
+                COALESCE((
+                    SELECT latest.release FROM error_occurrences latest
+                    JOIN events latestEvent ON latestEvent.id = latest.event_id
+                    WHERE latest.fingerprint = i.fingerprint
+                    ORDER BY latestEvent.timestamp DESC, latestEvent.id DESC LIMIT 1
+                ), '') AS latestRelease,
+                COALESCE((
+                    SELECT e.data_json FROM events e
+                    JOIN error_occurrences latest ON latest.event_id = e.id
+                    WHERE latest.fingerprint = i.fingerprint
+                    ORDER BY e.timestamp DESC, e.id DESC LIMIT 1
+                ), 'null') AS latestData
             FROM error_issues i
             LEFT JOIN error_occurrences o ON o.fingerprint = i.fingerprint
             WHERE i.fingerprint = ?
             GROUP BY i.fingerprint
         `).get(fingerprint) as Record<string, unknown> | undefined;
-        return row ? issueFromRow(row) : undefined;
+        return row ? this.issueFromRowWithResolution(row) : undefined;
+    }
+
+    private sourceMaps(): SourceMapRecord[] {
+        return (this.database.prepare(`
+            SELECT app_id AS appId, release, generated_file AS generatedFile,
+                source_map_json AS sourceMap
+            FROM source_maps
+        `).all() as Array<Omit<SourceMapRecord, "sourceMap"> & { sourceMap: string }>)
+            .map((row) => ({ ...row, sourceMap: parse(row.sourceMap) }));
+    }
+
+    private issueFromRowWithResolution(row: Record<string, unknown>): ErrorIssue {
+        const latestData = parse<Record<string, unknown>>(String(row.latestData));
+        const stack = String(row.rawStack || row.stack);
+        const resolved = resolveStack(
+            stack,
+            String(row.appId),
+            String(row.latestRelease),
+            this.sourceMaps(),
+        );
+        return issueFromRow({
+            ...row,
+            stackFrames: JSON.stringify(resolved.stackFrames),
+            resolutionStatus: resolved.resolutionStatus,
+        });
+    }
+
+    putSourceMap(upload: SourceMapUpload): "created" | "replaced" | "exists" {
+        const existing = this.database.prepare(`
+            SELECT 1 FROM source_maps
+            WHERE app_id = ? AND release = ? AND generated_file = ?
+        `).get(upload.appId, upload.release, upload.generatedFile);
+        if (existing && !upload.replace) return "exists";
+        this.database.prepare(`
+            INSERT INTO source_maps
+                (app_id, release, generated_file, source_map_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(app_id, release, generated_file) DO UPDATE SET
+                source_map_json = excluded.source_map_json,
+                created_at = excluded.created_at
+        `).run(
+            upload.appId,
+            upload.release,
+            upload.generatedFile,
+            json(upload.sourceMap),
+            Date.now(),
+        );
+        return existing ? "replaced" : "created";
+    }
+
+    listSourceMaps(appId?: string, release?: string): Array<{
+        appId: string;
+        release: string;
+        generatedFile: string;
+    }> {
+        const conditions = ["1 = 1"];
+        const parameters: string[] = [];
+        if (appId) {
+            conditions.push("app_id = ?");
+            parameters.push(appId);
+        }
+        if (release) {
+            conditions.push("release = ?");
+            parameters.push(release);
+        }
+        return this.database.prepare(`
+            SELECT app_id AS appId, release, generated_file AS generatedFile
+            FROM source_maps WHERE ${conditions.join(" AND ")}
+            ORDER BY app_id, release, generated_file
+        `).all(...parameters) as Array<{
+            appId: string;
+            release: string;
+            generatedFile: string;
+        }>;
     }
 
     errorEvents(fingerprint: string, page: number, pageSize: number): EventQueryResult {
@@ -388,8 +518,26 @@ export class SQLiteReportStore {
         `).all(fingerprint, pageSize, (page - 1) * pageSize) as Array<
             Omit<StoredEvent, "data" | "raw"> & { data: string; raw: string }
         >;
+        const maps = this.sourceMaps();
         return {
-            items: rows.map((row) => ({ ...row, data: parse(row.data), raw: parse(row.raw) })),
+            items: rows.map((row) => {
+                const data = parse<Record<string, unknown>>(row.data);
+                const stack = typeof data.stack === "string" ? data.stack : undefined;
+                const resolved = stack
+                    ? resolveStack(stack, row.appId, row.release, maps)
+                    : undefined;
+                return {
+                    ...row,
+                    data: resolved
+                        ? {
+                            ...data,
+                            stackFrames: resolved.stackFrames,
+                            resolutionStatus: resolved.resolutionStatus,
+                        }
+                        : data,
+                    raw: parse(row.raw),
+                };
+            }),
             total,
             page,
             pageSize,

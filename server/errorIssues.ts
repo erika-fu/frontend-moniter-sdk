@@ -6,6 +6,7 @@ export interface ErrorIssueIdentity {
     fingerprint: string;
     message: string;
     stack: string;
+    rawStack: string;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -60,5 +61,6 @@ export function getErrorIdentity(
         fingerprint: createHash("sha256").update(identity).digest("hex"),
         message,
         stack,
+        rawStack: typeof item.stack === "string" ? item.stack : "",
     };
 }
