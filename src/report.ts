@@ -287,8 +287,8 @@ export function report<T>(data: T): boolean {
     if (config.isImageUpload) {
         return imgRequest(reportData);
     }
-    if (isSupportSendBeacon()) {
-        return beaconRequest(reportData);
+    if (isSupportSendBeacon() && beaconRequest(reportData)) {
+        return true;
     }
     if (typeof XMLHttpRequest !== "undefined" && originalOpen && originalSend) {
         return xhrRequest(reportData);

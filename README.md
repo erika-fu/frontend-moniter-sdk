@@ -65,6 +65,8 @@ VITE_MONITOR_USER_ID=local-developer
 VITE_MONITOR_RELEASE=demo@0.1.0
 ```
 
+demo 还将普通监控报告的 `batchSize` 固定为 `1`，因此每批发送 1 条普通报告。这个配置不作用于 Replay：Replay 片段使用独立的最多 1000 个事件和 5 MiB 数据限制，并且不会被普通报告的 `batchSize` 拆散。详见 [Replay 会话录屏](docs/replay.md) 和 [Server 服务端文档](docs/server.md)。
+
 完整链路验收可运行 `npm run test:e2e`，会模拟 demo 的版本化信封，并从
 server 提供给 platform 的错误、性能和回放 API 查询结果。
 
@@ -184,23 +186,32 @@ Then visit `http://localhost:4173/`.
 - [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
 - [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位
 - [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输和事件路径
+- [Server 服务端文档](docs/server.md)：启动、版本化上报、SQLite、查询 API、SourceMap、错误和回放
 
 ## Report server
 
-Start the local report receiver:
+仓库提供一个基于 Node.js 和 SQLite 的本地报告服务。推荐使用版本化入口：
 
 ```bash
-npm run server
+npm run dev:server
+# http://localhost:9800
 ```
 
-Configure the SDK to send reports to
-`http://localhost:9800/reportData`. The server accepts JSON sent by Beacon or
-XHR and the `data` query parameter used by image reporting. Received report
-envelopes are printed to the terminal. Set `PORT` to override the default port:
-
-```bash
-PORT=3000 npm run server
+```ts
+monitor.init({
+  url: "http://localhost:9800/api/v1/reportData",
+  projectName: "storefront",
+  appId: "web",
+  release: "web@2026.10.07",
+});
 ```
+
+`POST /api/v1/reportData` 成功返回 `202 Accepted`；旧客户端使用的
+`/reportData` 仍兼容并返回 `200 ok`。server 默认将报告写入
+`server/data/monitoring.sqlite`，并提供 health、应用/事件、性能、错误、SourceMap
+和回放查询接口。`PORT`、`REPORT_DB_PATH`、`RETENTION_DAYS` 和 `CORS_ORIGINS`
+可通过环境变量配置。完整的请求字段、响应示例、限制和生产部署注意事项见
+[Server 服务端文档](docs/server.md)。
 
 The Vue demo uses hash routing:
 

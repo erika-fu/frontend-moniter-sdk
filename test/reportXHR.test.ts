@@ -47,4 +47,33 @@ describe("XHR report transport", () => {
       FakeXMLHttpRequest.instances[0]?.setRequestHeader,
     ).toHaveBeenCalledWith("Content-Type", "application/json");
   });
+
+  it("falls back to XHR when Beacon rejects a report", async () => {
+    const sendBeacon = vi.fn(() => false);
+    const originalOpen = vi.fn();
+    const originalSend = vi.fn();
+
+    class FakeXMLHttpRequest {
+      declare open: typeof originalOpen;
+      declare send: typeof originalSend;
+      setRequestHeader = vi.fn();
+    }
+
+    FakeXMLHttpRequest.prototype.open = originalOpen;
+    FakeXMLHttpRequest.prototype.send = originalSend;
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+    vi.stubGlobal("navigator", { sendBeacon });
+    vi.stubGlobal("window", {
+      navigator,
+      requestIdleCallback: (callback: () => void) => callback(),
+    });
+
+    const { report, setConfig } = await import("../src/report.js");
+    setConfig({ url: "/monitor" });
+
+    expect(report({ type: "replay", event: { type: 2 } })).toBe(true);
+    expect(sendBeacon).toHaveBeenCalledOnce();
+    expect(originalOpen).toHaveBeenCalledWith("POST", "/monitor");
+    expect(originalSend).toHaveBeenCalledOnce();
+  });
 });
