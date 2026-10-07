@@ -1,6 +1,6 @@
 {
   "name": "frontend-moniter-sdk",
-  "private": true,
+  "private": false,
   "version": "0.1.3",
   "description": "Frontend monitoring SDK.",
   "license": "MIT",
@@ -44,7 +44,8 @@
     "typecheck:react-demo": "npm --workspace react-demo run typecheck",
     "typecheck:all": "npm run typecheck && npm run typecheck:server && npm run typecheck:platform && npm run typecheck:demo && npm run typecheck:react-demo",
     "check": "npm run typecheck:all && npm test && npm run build:all",
-    "prepublishOnly": "npm run check"
+    "check:sdk": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "npm run check:sdk"
   },
   "sideEffects": false,
   "workspaces": [
