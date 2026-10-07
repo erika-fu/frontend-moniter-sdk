@@ -32,6 +32,8 @@ stopObserveReplay();
 
 `observeReplay()` 在已有录制器时不会重复启动 rrweb。重复调用会替换 `onReport`，并更新后续错误尾段使用的 `postErrorDuration`；屏蔽规则等 rrweb 录制参数应在首次启动前确定。
 
+Replay 与普通报告使用两套独立的批量边界：SDK 初始化的 `batchSize` 只决定普通监控报告何时发送，不会拆分 Replay 事件。当前 demo 在 [demo/src/main.ts](../demo/src/main.ts) 配置 `batchSize: 1`，含义是普通报告每批 1 条；Replay 片段仍按自身的事件数和数据量限制聚合后上报。
+
 ## 1. 配置与隐私
 
 默认将所有输入框的值脱敏，并屏蔽以下元素及其子树：
@@ -142,4 +144,4 @@ interface ReplayEventReportData {
 }
 ```
 
-`isCheckout` 保留 rrweb 的 checkout 标记。服务端或回放页应按 `replayId` 分组，并按事件时间排序后交给 rrweb player。
+`isCheckout` 保留 rrweb 的 checkout 标记。服务端或回放页应按 `replayId` 分组，并按事件时间排序后交给 rrweb player。仓库内 server 提供 `GET /api/v1/replays` 列表和 `GET /api/v1/replays/:replayId?appId=...` 详情接口；详情返回 session 元数据及按 `replayOffset` 排序的事件。服务端会将片段标记为 `ready`、`incomplete` 或 `unplayable`，并限制每个 replay 最多 1000 个事件、30 分钟和 5 MiB。完整筛选参数、响应结构和限制见 [Server 服务端文档](server.md)。

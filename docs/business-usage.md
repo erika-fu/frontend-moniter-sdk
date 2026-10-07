@@ -45,7 +45,7 @@ monitor.init({
 });
 ```
 
-浏览器上传原始 `stack`、文件 URL、行列号和 release。监控服务端使用 release 选择对应 SourceMap，解析后保存 `stackFrames` 和 `sourceStack`，避免把 SourceMap 和解析逻辑放进业务页面。
+浏览器上传原始 `stack`、文件 URL、行列号和 release。监控服务端使用 `appId`、`release` 和 generated file 选择对应 SourceMap，解析后保存 `stackFrames`、`rawStack` 和 `resolutionStatus`，避免把 SourceMap 和解析逻辑放进业务页面。服务端启动、SourceMap 上传和查询接口见 [Server 服务端文档](server.md)。
 
 `init` 只更新配置，不启动观察器。应先 `init` 再启动模块，避免首条 PV 或错误使用旧配置。
 
@@ -62,6 +62,8 @@ monitor.init({
 | `batchSize` | `number` | `5` | 达到数量时发送；小数向下取整，负数变 0 |
 
 配置只更新已提供字段，`false` 和 `0` 也会生效。实际批处理把 `batchSize: 0` 按单条发送，避免数据永远留在缓存。
+
+`batchSize` 只控制普通监控报告的批量发送，不控制 Replay 事件。当前 demo 在 [demo/src/main.ts](../demo/src/main.ts) 中显式配置 `batchSize: 1`，因此普通性能、行为和错误报告按每批 1 条发送；Replay 仍按自己的片段限制收集和上报，不会被这个值拆散。Replay 默认最多保留 1000 个事件或 5 MiB 数据，服务端还会限制单个片段最长 30 分钟，详见 [Replay 会话录屏](replay.md) 和 [Server 服务端文档](server.md)。
 
 ## 4. 接收报告
 
@@ -109,7 +111,7 @@ interface ReportEnvelope<T = unknown> {
 }
 ```
 
-`id` 由 SDK 生成。直接调用 `report(data)` 时 `data` 是单条；批处理 flush 时 `data` 是缓存数组，因此服务端应兼容两种形态。各数据字段见 `performance.md`、`behavior.md`、`error.md` 和 `replay.md`。
+`id` 由 SDK 生成。直接调用 `report(data)` 时 `data` 是单条；批处理 flush 时 `data` 是缓存数组，因此服务端应兼容两种形态。面向仓库内 server 时，推荐将 `url` 配置为 `/api/v1/reportData`；旧的 `/reportData` 仅作为兼容入口。版本化 envelope 使用 `protocolVersion: 1` 时还需要 `sessionId`、有限数值的 `timestamp`、`release`、`user.id` 和完整 `environment` 字段。各数据字段见 `performance.md`、`behavior.md`、`error.md` 和 `replay.md`，服务端协议与响应见 [Server 服务端文档](server.md)。
 
 ## 6. 发送顺序和失败处理
 
@@ -145,7 +147,7 @@ const current = monitor.getReplaySession();
 console.log(current?.sessionId, current?.replayId);
 ```
 
-运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。`preErrorDuration` 按时间保留错误前真实事件，`postErrorDuration` 只等待并收集错误后真实事件，不会伪造空白操作。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)。
+运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。`preErrorDuration` 按时间保留错误前真实事件，`postErrorDuration` 只等待并收集错误后真实事件，不会伪造空白操作。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。服务端按 `appId` 和 `replayId` 提供 `/api/v1/replays` 列表和详情接口，每个片段最多 1000 个事件、30 分钟和 5 MiB；隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)，服务端查询和限制见 [Server 服务端文档](server.md)。
 
 ## 8. Vue 2 接入
 

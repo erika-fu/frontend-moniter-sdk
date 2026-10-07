@@ -140,7 +140,7 @@ interface ReactErrorReportData {
 
 ## 7. 服务端堆栈还原
 
-仓库提供的 `createReportServer` 在接收批量报告后使用 `error-stack-parser` 生成 `stackFrames`，再使用 `source-map-js` 查询 SourceMap，并把结果保存为 `sourceStack`。SourceMap 存储可按 release 定制：
+仓库提供的 `createReportServer` 在接收批量报告后使用 `error-stack-parser` 生成 `stackFrames`，再使用 `source-map-js` 查询 SourceMap。SQLite server 会保留原始 `rawStack`，并在查询 issue 时返回 `stackFrames` 和 `resolutionStatus`；不会用映射结果覆盖原始 stack。SourceMap 可以通过持久化 API 按 `appId`、`release` 和 generated file 上传，也可以为嵌入式 server 配置外部 URL：
 
 ```ts
 createReportServer({
@@ -151,4 +151,4 @@ createReportServer({
 });
 ```
 
-`sourceMapUrl` 对每个包含文件名、行号和列号的 stack frame 调用。SourceMap 不可用或解析失败时，服务端保留原始 `stack` 和构建后位置，不阻断报告接收。
+`sourceMapUrl` 对每个包含文件名、行号和列号的 stack frame 调用。使用仓库内 SQLite server 时，也可以调用 `POST /api/v1/source-maps` 上传 version 3 SourceMap；同一 `appId`、`release`、`generatedFile` 默认不能重复上传，设置 `replace=true` 才会覆盖，上传上限为 5 MiB。SourceMap 不可用或解析失败时，服务端保留原始 `stack` 和构建后位置，不阻断报告接收，`resolutionStatus` 会说明是 `resolved`、`version_not_found`、`file_not_found`、`parse_failed` 还是 `unmapped`。错误 issue 可通过 `GET /api/v1/errors` 查询，并用 `PATCH /api/v1/errors/:fingerprint` 更新为 `unresolved`、`resolved` 或 `ignored`。完整请求、响应和部署说明见 [Server 服务端文档](server.md)。
