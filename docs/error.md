@@ -34,7 +34,7 @@ interface ResourceErrorReportData {
 
 `paths` 是节点名称而不是 DOM 对象，例如 `["SCRIPT", "BODY", "HTML", "Document", "Window"]`，避免循环引用。普通资源事件通常不给 HTTP 状态码，所以报告也不包含响应状态。
 
-录屏运行时，所有浏览器和框架错误类型还会带上可选的 `replayId`、`sessionId` 和 `replayOffset`。错误先上报，关联的回放片段默认继续录制 2 秒后再上报；详见 [Replay 会话录屏](replay.md)。
+录屏运行时，所有浏览器和框架错误类型还会带上可选的 `replayId`、`sessionId` 和 `replayOffset`。错误先上报；具备完整 snapshot 后，错误前回放片段也会立即上报，随后在同一 `replayId` 下继续录制错误后事件（默认最长 5 分钟，空闲 30 秒结束，并受事件数/体积上限约束）。详见 [Replay 会话录屏](replay.md)。
 
 ## 3. JavaScript 异常
 

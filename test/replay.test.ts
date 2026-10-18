@@ -126,7 +126,7 @@ describe("observeReplay", () => {
         expect(onReport.mock.calls.map(([report]) => report.replayOffset)).toEqual([0, 5, 25]);
     });
 
-    it("keeps waiting when the snapshot misses the post-error window", () => {
+    it("waits for a late snapshot before starting post-error continuation", () => {
         vi.useFakeTimers();
         const onReport = vi.fn();
         let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
@@ -136,7 +136,11 @@ describe("observeReplay", () => {
         });
         vi.stubGlobal("window", {});
 
-        observeReplay({ onReport, postErrorDuration: 10 });
+        observeReplay({
+            onReport,
+            postErrorDuration: 1000,
+            postErrorIdleTimeout: 10,
+        });
         const replay = getReplaySession()!;
         emit?.({ type: 4, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
         flushReplayOnError();
@@ -145,9 +149,9 @@ describe("observeReplay", () => {
         expect(onReport).not.toHaveBeenCalled();
 
         emit?.({ type: 2, timestamp: replay.startedAt + 20, data: {} } as unknown as eventWithTime);
-        emit?.({ type: 3, timestamp: replay.startedAt + 30, data: {} } as unknown as eventWithTime);
-        vi.runAllTimers();
+        expect(onReport.mock.calls.map(([report]) => report.event.type)).toEqual([4, 2]);
 
+        emit?.({ type: 3, timestamp: replay.startedAt + 30, data: {} } as unknown as eventWithTime);
         expect(onReport.mock.calls.map(([report]) => report.event.type)).toEqual([4, 2, 3]);
     });
 
@@ -261,7 +265,7 @@ describe("observeReplay", () => {
         ).toBe(true);
     });
 
-    it("includes events recorded during the post-error window", () => {
+    it("flushes the pre-error segment immediately and keeps recording afterward", () => {
         vi.useFakeTimers();
         const onReport = vi.fn();
         let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
@@ -272,7 +276,11 @@ describe("observeReplay", () => {
         vi.stubGlobal("window", {});
         vi.stubGlobal("performance", { now: () => 10 });
 
-        observeReplay({ onReport });
+        observeReplay({
+            onReport,
+            postErrorDuration: 1000,
+            postErrorIdleTimeout: 100,
+        });
         const session = getReplaySession()!;
         emit?.({
             type: 4,
@@ -290,22 +298,27 @@ describe("observeReplay", () => {
             sessionId: session.sessionId,
             replayOffset: 100,
         });
+
+        expect(onReport.mock.calls.map(([report]) => report.replayOffset)).toEqual([0, 10]);
+        expect(getReplaySession()?.replayId).toBe(session.replayId);
+
         emit?.({
             type: 3,
             timestamp: session.startedAt + 1000,
             data: {},
         } as unknown as eventWithTime);
 
-        vi.advanceTimersByTime(1999);
-        expect(onReport).not.toHaveBeenCalled();
+        expect(onReport.mock.calls.map(([report]) => report.replayOffset)).toEqual([
+            0, 10, 1000,
+        ]);
+        expect(getReplaySession()?.replayId).toBe(session.replayId);
 
-        vi.advanceTimersByTime(1);
-        expect(
-            onReport.mock.calls.map(([report]) => report.replayOffset),
-        ).toEqual([0, 10, 1000]);
+        vi.advanceTimersByTime(100);
+        expect(getReplaySession()?.replayId).not.toBe(session.replayId);
+        expect(getReplaySession()?.sessionId).toBe(session.sessionId);
     });
 
-    it("preserves pre-error events when the post-error tail is busy", () => {
+    it("extends the post-error idle window when more events arrive", () => {
         vi.useFakeTimers();
         const onReport = vi.fn();
         let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
@@ -315,20 +328,65 @@ describe("observeReplay", () => {
         });
         vi.stubGlobal("window", {});
 
-        observeReplay({ onReport, bufferSize: 2, postErrorDuration: 10 });
+        observeReplay({
+            onReport,
+            postErrorDuration: 1000,
+            postErrorIdleTimeout: 100,
+        });
+        const session = getReplaySession()!;
+        emit?.({ type: 2, timestamp: session.startedAt, data: {} } as unknown as eventWithTime);
+        flushReplayOnError();
+
+        emit?.({
+            type: 3,
+            timestamp: session.startedAt + 1,
+            data: { value: "after-1" },
+        } as unknown as eventWithTime);
+        vi.advanceTimersByTime(90);
+        emit?.({
+            type: 3,
+            timestamp: session.startedAt + 2,
+            data: { value: "after-2" },
+        } as unknown as eventWithTime);
+        vi.advanceTimersByTime(90);
+
+        expect(getReplaySession()?.replayId).toBe(session.replayId);
+        expect(
+            onReport.mock.calls.map(([report]) => report.event.data?.value),
+        ).toEqual([undefined, "after-1", "after-2"]);
+
+        vi.advanceTimersByTime(100);
+        expect(getReplaySession()?.replayId).not.toBe(session.replayId);
+    });
+
+    it("preserves the pre-error segment even when the post-error budget ends early", () => {
+        vi.useFakeTimers();
+        const onReport = vi.fn();
+        let emit: ((event: eventWithTime, isCheckout?: boolean) => void) | undefined;
+        record.mockImplementation((options) => {
+            emit = options.emit;
+            return vi.fn();
+        });
+        vi.stubGlobal("window", {});
+
+        observeReplay({
+            onReport,
+            maxReplayEvents: 4,
+            postErrorDuration: 1000,
+            postErrorIdleTimeout: 50,
+        });
         const replay = getReplaySession()!;
         emit?.({ type: 2, timestamp: replay.startedAt, data: {} } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: replay.startedAt + 1, data: { value: "before-1" } } as unknown as eventWithTime);
         emit?.({ type: 3, timestamp: replay.startedAt + 2, data: { value: "before-2" } } as unknown as eventWithTime);
         flushReplayOnError();
+        const firstReplayId = replay.replayId;
         emit?.({ type: 3, timestamp: replay.startedAt + 3, data: { value: "after-1" } } as unknown as eventWithTime);
-        emit?.({ type: 3, timestamp: replay.startedAt + 4, data: { value: "after-2" } } as unknown as eventWithTime);
-        emit?.({ type: 3, timestamp: replay.startedAt + 5, data: { value: "after-3" } } as unknown as eventWithTime);
-        vi.advanceTimersByTime(10);
 
         expect(onReport.mock.calls.map(([report]) => report.event.data?.value)).toEqual([
-            undefined, "before-1", "before-2", "after-2", "after-3",
+            undefined, "before-1", "before-2", "after-1",
         ]);
+        expect(getReplaySession()?.replayId).not.toBe(firstReplayId);
     });
 
     it("ignores stale replay contexts and late events from an old recorder", () => {

@@ -4,7 +4,7 @@ import {
     type Server,
     type ServerResponse,
 } from "node:http";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 import { isParseableSourceMap } from "./sourceMaps.js";
 import {
@@ -802,7 +802,7 @@ if (
     const port = Number.parseInt(process.env.PORT ?? "9800", 10);
     const databasePath =
         process.env.REPORT_DB_PATH ??
-        new URL("./data/monitoring.sqlite", import.meta.url).pathname;
+        fileURLToPath(new URL("./data/monitoring.sqlite", import.meta.url));
     const retentionDays = Number.parseInt(
         process.env.RETENTION_DAYS ?? String(DEFAULT_RETENTION_DAYS),
         10,

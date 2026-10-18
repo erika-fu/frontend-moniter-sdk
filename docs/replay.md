@@ -1,6 +1,6 @@
 # Replay 会话录屏
 
-录屏模块基于 rrweb 记录页面 DOM、输入和交互事件。事件默认只保存在浏览器内存中，不会持续上传；发生资源、JavaScript、Promise、Vue 或 React 错误后，SDK 才会上报最近一次完整 DOM 快照、快照后的近期事件，以及错误后的尾段事件。
+录屏模块基于 rrweb 记录页面 DOM、输入和交互事件。事件默认只保存在浏览器内存中，不会持续上传；发生资源、JavaScript、Promise、Vue 或 React 错误后，SDK 会上报最近一次完整 DOM 快照与错误前事件，并在同一回放片段中继续录制错误后的真实事件，直到空闲超时、达到最长继续时长，或触达事件/体积上限。
 
 `init()` 不会自动启动录屏，需要显式调用：
 
@@ -30,9 +30,9 @@ getReplaySession();
 stopObserveReplay();
 ```
 
-`observeReplay()` 在已有录制器时不会重复启动 rrweb。重复调用会替换 `onReport`，并更新后续错误尾段使用的 `postErrorDuration`；屏蔽规则等 rrweb 录制参数应在首次启动前确定。
+`observeReplay()` 在已有录制器时不会重复启动 rrweb。重复调用会替换 `onReport`，并更新后续继续录制使用的 `postErrorDuration` / `postErrorIdleTimeout`；屏蔽规则等 rrweb 录制参数应在首次启动前确定。
 
-Replay 与普通报告使用两套独立的批量边界：SDK 初始化的 `batchSize` 只决定普通监控报告何时发送，不会拆分 Replay 事件。当前 demo 在 [demo/src/main.ts](../demo/src/main.ts) 配置 `batchSize: 1`，含义是普通报告每批 1 条；Replay 片段仍按自身的事件数和数据量限制聚合后上报。
+Replay 与普通报告使用两套独立的批量边界：SDK 初始化的 `batchSize` 只决定普通监控报告何时发送，不会拆分 Replay 事件。当前 demo 在 [demo/src/main.ts](../demo/src/main.ts) 配置 `batchSize: 1`，含义是普通报告每批 1 条；Replay 事件按自身的事件数和数据量限制进入统一分发。
 
 ## 1. 配置与隐私
 
@@ -51,22 +51,24 @@ observeReplay({
   maskAllInputs: true,
   blockClass: "private-content",
   blockSelector: "[data-private], .secret",
-  preErrorDuration: 30000,
+  preErrorDuration: 60_000,
   bufferSize: 100,
   maxReplayEvents: 1000,
   maxReplayBytes: 5 * 1024 * 1024,
-  postErrorDuration: 2000,
+  postErrorDuration: 5 * 60 * 1000,
+  postErrorIdleTimeout: 30_000,
 });
 ```
 
 | 参数 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `onReport` | `(data: ReplayEventReportData) => void` | 无 | 每条回放事件进入统一分发后调用 |
-| `preErrorDuration` | `number` | `30000` | 错误前按 rrweb 时间戳保留的毫秒数，最小为 0 |
+| `preErrorDuration` | `number` | `60000` | 错误前按 rrweb 时间戳保留的毫秒数，最小为 0 |
 | `bufferSize` | `number` | `100` | 兼容旧配置；作为回放最大事件数的兜底上限 |
-| `maxReplayEvents` | `number` | `1000` | 单个回放片段最多保留的事件数 |
-| `maxReplayBytes` | `number` | `5 MiB` | 单个回放片段最多保留的 JSON 字节数 |
-| `postErrorDuration` | `number` | `2000` | 错误后继续录制的毫秒数，最小为 0；等待期间不伪造事件 |
+| `maxReplayEvents` | `number` | `1000` | 单个回放片段最多保留/上报的事件数 |
+| `maxReplayBytes` | `number` | `5 MiB` | 单个回放片段最多保留/上报的 JSON 字节数 |
+| `postErrorDuration` | `number` | `300000` | 错误后最长继续录制的毫秒数；`0` 表示立即冲刷并轮换 |
+| `postErrorIdleTimeout` | `number` | `30000` | 错误后无新事件时结束继续录制的空闲毫秒数 |
 | `maskAllInputs` | `boolean` | `true` | 是否脱敏所有输入值 |
 | `blockClass` | `string` | `"monitor-block"` | rrweb 屏蔽元素的 class |
 | `blockSelector` | `string` | `"[data-monitor-mask]"` | rrweb 屏蔽元素的选择器 |
@@ -92,10 +94,10 @@ interface ReplaySession {
 两个 ID 的生命周期不同：
 
 - `sessionId` 从 `observeReplay()` 成功启动到 `stopObserveReplay()` 保持不变，用于关联同一次页面录制中的多个错误；
-- `replayId` 标识一段可独立播放的回放。错误片段上报完成后，SDK 会停止旧录制器、生成新的 `replayId` 和 DOM snapshot，再继续录制；
-- `stopObserveReplay()` 会取消待执行的错误尾段定时器、停止 rrweb、清空内存事件，并结束当前 `sessionId`。再次启动会生成新的两个 ID。
+- `replayId` 标识一段可独立播放的回放。错误前片段会立即上报，错误后继续录制仍使用同一 `replayId`；当空闲超时、达到最长继续时长，或触达事件/体积上限后，SDK 会停止旧录制器、生成新的 `replayId` 和 DOM snapshot，再回到缓冲模式；
+- `stopObserveReplay()` 会取消待执行的继续录制定时器、停止 rrweb、清空内存事件，并结束当前 `sessionId`。再次启动会生成新的两个 ID。
 
-## 3. 错误触发与尾段
+## 3. 错误触发与继续录制
 
 录制期间产生的错误报告会附加：
 
@@ -107,11 +109,11 @@ interface ReplayErrorContext {
 }
 ```
 
-`replayOffset` 是错误发生时距当前回放片段开始的毫秒数。SDK 平时按 `preErrorDuration` 保留最近一段真实 rrweb 事件，并以 `maxReplayEvents`/`maxReplayBytes` 作为内存上限；错误报告立即进入统一分发，回放事件默认在错误后继续采集 2 秒再作为一个受限片段批量进入统一分发，因此播放器可以展示错误前后的上下文。等待窗口不会生成虚假操作事件，页面空闲时回放时长仍以最后一个真实事件为准。`postErrorDuration: 0` 会在错误发生后立即冲刷已经具备完整快照的片段。
+`replayOffset` 是错误发生时距当前回放片段开始的毫秒数。SDK 平时按 `preErrorDuration` 保留最近一段真实 rrweb 事件，并以 `maxReplayEvents`/`maxReplayBytes` 作为上限。错误报告立即进入统一分发；具备完整 snapshot 后，错误前片段也会立即上报。之后 SDK 在同一 `replayId` 下继续录制真实事件（默认最长 5 分钟，空闲 30 秒结束），并把错误后事件流式写入统一分发，因此播放器可以展示错误前后的上下文。不会伪造空白操作事件；页面空闲时回放时长仍以最后一个真实事件为准。`postErrorDuration: 0` 会在错误发生后立即冲刷已经具备完整快照的片段并轮换。
 
-如果错误发生在 rrweb full snapshot 产生之前，SDK 会暂缓冲刷，不会上报只有 Meta/bootstrap 事件的不可播放片段；full snapshot 到达后再冲刷完整事件序列。即使 snapshot 晚于错误尾段窗口到达，也会等待它，避免产生 0ms 的 Meta-only 回放。
+如果错误发生在 rrweb full snapshot 产生之前，SDK 会暂缓冲刷，不会上报只有 Meta/bootstrap 事件的不可播放片段；full snapshot 到达后再上报完整事件序列并开始继续录制。
 
-尾段窗口内发生多个错误时，SDK 会把定时器延后，并只冲刷一次当前片段，避免重复上传相同事件；每条错误报告仍保留各自发生时的 `replayOffset`。片段冲刷时还会调用 `flushReportQueue()`，尝试立即发送错误和回放事件。
+继续录制期间再次发生错误时，SDK 会延长空闲计时，并保持同一 `replayId`；每条错误报告仍保留各自发生时的 `replayOffset`。触达事件数或字节上限时会提前结束继续录制并轮换片段。
 
 ## 4. 回放地址与事件
 

@@ -6,8 +6,9 @@ import {
 import { dispatchReportBatch } from "../report.js";
 
 const DEFAULT_MAX_REPLAY_EVENTS = 1000;
-const DEFAULT_PRE_ERROR_DURATION = 30_000;
-const DEFAULT_POST_ERROR_DURATION = 2000;
+const DEFAULT_PRE_ERROR_DURATION = 60_000;
+const DEFAULT_POST_ERROR_DURATION = 5 * 60 * 1000;
+const DEFAULT_POST_ERROR_IDLE_TIMEOUT = 30_000;
 const MAX_REPLAY_BYTES = 5 * 1024 * 1024;
 const FULL_SNAPSHOT_EVENT_TYPE = 2;
 
@@ -40,14 +41,22 @@ export interface ReplayMonitoringOptions {
     onReport?: ReplayReportHandler;
     /** 兼容旧配置：回放缓冲最多保留的 rrweb 事件数，默认 100。 */
     bufferSize?: number;
-    /** 错误前按事件时间保留的毫秒数，默认 30000。 */
+    /** 错误前按事件时间保留的毫秒数，默认 60000。 */
     preErrorDuration?: number;
     /** 回放片段最多保留的事件数，默认 1000；提供 bufferSize 时兼容其值。 */
     maxReplayEvents?: number;
     /** 回放片段最多保留的 JSON 字节数，默认 5 MiB。 */
     maxReplayBytes?: number;
-    /** 异常后继续录制的毫秒数，默认 2000；设为 0 时立即上报。 */
+    /**
+     * 异常后最长继续录制的毫秒数，默认 5 分钟。
+     * 设为 0 时立即上报当前片段并开始下一段缓冲。
+     */
     postErrorDuration?: number;
+    /**
+     * 异常后无新事件时结束继续录制的空闲毫秒数，默认 30 秒。
+     * 仅在 `postErrorDuration > 0` 时生效。
+     */
+    postErrorIdleTimeout?: number;
     /** 是否脱敏全部输入框，默认开启。 */
     maskAllInputs?: boolean;
     /** 需要屏蔽的元素 class，默认是 `monitor-block`。 */
@@ -72,19 +81,25 @@ let activeSessionId: string | undefined;
 let stopRecording: (() => void) | undefined;
 let reportHandler: ReplayReportHandler | undefined;
 let buffer: BufferedReplayEvent[] = [];
-let postErrorBuffer: BufferedReplayEvent[] = [];
+let pendingTailEvents: BufferedReplayEvent[] = [];
 let maxReplayEvents = DEFAULT_MAX_REPLAY_EVENTS;
 let maxReplayBytes = MAX_REPLAY_BYTES;
 let preErrorDuration = DEFAULT_PRE_ERROR_DURATION;
 let bufferBytes = 0;
-let postErrorBufferBytes = 0;
 let snapshot: BufferedReplayEvent | undefined;
 let bootstrapEvents: BufferedReplayEvent[] = [];
 let frozenPreErrorEvents: BufferedReplayEvent[] | undefined;
 let postErrorDuration = DEFAULT_POST_ERROR_DURATION;
-let pendingFlushTimer: ReturnType<typeof setTimeout> | undefined;
-let pendingFlushSessionId: string | undefined;
+let postErrorIdleTimeout = DEFAULT_POST_ERROR_IDLE_TIMEOUT;
+let continuationActive = false;
+let initialSegmentFlushed = false;
+let pendingSnapshotFlush = false;
+let immediateRotatePending = false;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+let maxTimer: ReturnType<typeof setTimeout> | undefined;
 let replayOptions: ReplayMonitoringOptions = {};
+let emittedEventCount = 0;
+let emittedBytes = 0;
 
 function getNow(): number {
     if (
@@ -128,52 +143,39 @@ function normalizePostErrorDuration(value: number | undefined): number {
     return normalizeDuration(value, DEFAULT_POST_ERROR_DURATION);
 }
 
-function clearPendingFlush(): void {
-    if (pendingFlushTimer !== undefined) {
-        clearTimeout(pendingFlushTimer);
-        pendingFlushTimer = undefined;
-    }
-    pendingFlushSessionId = undefined;
+function normalizePostErrorIdleTimeout(value: number | undefined): number {
+    return normalizeDuration(value, DEFAULT_POST_ERROR_IDLE_TIMEOUT);
 }
 
-function schedulePendingFlush(sessionId: string, replayId: string, delay: number): void {
-    clearPendingFlush();
-    pendingFlushSessionId = sessionId;
-    pendingFlushTimer = setTimeout(() => {
-        pendingFlushTimer = undefined;
-        if (
-            !session ||
-            session.sessionId !== sessionId ||
-            session.replayId !== replayId
-        ) {
-            pendingFlushSessionId = undefined;
-            return;
-        }
-        if (snapshot) {
-            pendingFlushSessionId = undefined;
-            flushReplayBuffer(sessionId, replayId);
-        }
-    }, delay);
+function clearContinuationTimers(): void {
+    if (idleTimer !== undefined) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+    }
+    if (maxTimer !== undefined) {
+        clearTimeout(maxTimer);
+        maxTimer = undefined;
+    }
 }
 
 function resetReplayBuffer(): void {
     buffer = [];
-    postErrorBuffer = [];
+    pendingTailEvents = [];
     bufferBytes = 0;
-    postErrorBufferBytes = 0;
     snapshot = undefined;
     bootstrapEvents = [];
     frozenPreErrorEvents = undefined;
+    continuationActive = false;
+    initialSegmentFlushed = false;
+    pendingSnapshotFlush = false;
+    immediateRotatePending = false;
+    emittedEventCount = 0;
+    emittedBytes = 0;
 }
 
 function clearReplayEvents(): void {
     buffer = [];
     bufferBytes = 0;
-}
-
-function clearPostErrorEvents(): void {
-    postErrorBuffer = [];
-    postErrorBufferBytes = 0;
 }
 
 function trimBuffer(values: BufferedReplayEvent[], byteCount: number): number {
@@ -201,19 +203,9 @@ function addToRingBuffer(value: BufferedReplayEvent): void {
     bufferBytes = trimBuffer(buffer, bufferBytes);
 }
 
-function addToPostErrorBuffer(value: BufferedReplayEvent): void {
-    postErrorBuffer.push(value);
-    postErrorBufferBytes = trimBuffer(
-        postErrorBuffer,
-        postErrorBufferBytes + eventBytes(value.event),
-    );
-}
-
-function getBufferedEvents(): BufferedReplayEvent[] {
-    const events: BufferedReplayEvent[] = [...bootstrapEvents];
-    if (snapshot) events.push(snapshot);
-    events.push(...(frozenPreErrorEvents ?? buffer));
-    events.push(...postErrorBuffer);
+function uniqueSortedEvents(
+    events: BufferedReplayEvent[],
+): BufferedReplayEvent[] {
     const seen = new Set<eventWithTime>();
     return events
         .filter((bufferedEvent) => {
@@ -253,6 +245,198 @@ function createReplayReport(
     };
 }
 
+function trackEmitted(events: BufferedReplayEvent[]): void {
+    for (const bufferedEvent of events) {
+        emittedEventCount += 1;
+        emittedBytes += eventBytes(bufferedEvent.event);
+    }
+}
+
+function dispatchEvents(
+    currentSession: ReplaySession,
+    events: BufferedReplayEvent[],
+): void {
+    const uniqueEvents = uniqueSortedEvents(events);
+    if (uniqueEvents.length === 0) {
+        return;
+    }
+    trackEmitted(uniqueEvents);
+    dispatchReportBatch(
+        uniqueEvents.map((bufferedEvent) =>
+            createReplayReport(currentSession, bufferedEvent),
+        ),
+        reportHandler,
+    );
+}
+
+function hasExceededReplayBudget(): boolean {
+    return emittedEventCount >= maxReplayEvents || emittedBytes >= maxReplayBytes;
+}
+
+function rotateSession(): void {
+    stopRecording?.();
+    stopRecording = undefined;
+    session = undefined;
+    resetReplayBuffer();
+    startReplaySession();
+}
+
+function endContinuation(sessionId: string, replayId: string): void {
+    if (
+        !session ||
+        session.sessionId !== sessionId ||
+        session.replayId !== replayId
+    ) {
+        return;
+    }
+
+    clearContinuationTimers();
+    if (pendingTailEvents.length > 0) {
+        dispatchEvents(session, pendingTailEvents);
+        pendingTailEvents = [];
+    }
+    rotateSession();
+}
+
+function scheduleIdleEnd(sessionId: string, replayId: string): void {
+    if (idleTimer !== undefined) {
+        clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+        idleTimer = undefined;
+        endContinuation(sessionId, replayId);
+    }, postErrorIdleTimeout);
+}
+
+function scheduleContinuationTimers(sessionId: string, replayId: string): void {
+    clearContinuationTimers();
+    maxTimer = setTimeout(() => {
+        maxTimer = undefined;
+        endContinuation(sessionId, replayId);
+    }, postErrorDuration);
+    scheduleIdleEnd(sessionId, replayId);
+}
+
+function flushInitialSegment(
+    sessionId: string,
+    replayId: string,
+): boolean {
+    if (
+        !session ||
+        !snapshot ||
+        initialSegmentFlushed ||
+        session.sessionId !== sessionId ||
+        session.replayId !== replayId
+    ) {
+        return false;
+    }
+
+    const events: BufferedReplayEvent[] = [...bootstrapEvents, snapshot];
+    if (frozenPreErrorEvents) {
+        events.push(...frozenPreErrorEvents);
+    }
+    dispatchEvents(session, events);
+    initialSegmentFlushed = true;
+    frozenPreErrorEvents = undefined;
+    return true;
+}
+
+function flushFullSegmentAndRotate(
+    sessionId: string,
+    replayId: string,
+): void {
+    if (
+        !session ||
+        session.sessionId !== sessionId ||
+        session.replayId !== replayId
+    ) {
+        return;
+    }
+
+    clearContinuationTimers();
+    immediateRotatePending = false;
+    const events: BufferedReplayEvent[] = [...bootstrapEvents];
+    if (snapshot) events.push(snapshot);
+    events.push(...(frozenPreErrorEvents ?? buffer));
+    events.push(...pendingTailEvents);
+    dispatchEvents(session, events);
+    rotateSession();
+}
+
+function scheduleImmediateRotate(sessionId: string, replayId: string): void {
+    if (immediateRotatePending) {
+        return;
+    }
+    continuationActive = true;
+    immediateRotatePending = true;
+    maxTimer = setTimeout(() => {
+        maxTimer = undefined;
+        flushFullSegmentAndRotate(sessionId, replayId);
+    }, 0);
+}
+
+function beginContinuation(sessionId: string, replayId: string): void {
+    continuationActive = true;
+    pendingSnapshotFlush = false;
+    if (!flushInitialSegment(sessionId, replayId)) {
+        pendingSnapshotFlush = true;
+        return;
+    }
+    if (pendingTailEvents.length > 0 && session) {
+        const tail = pendingTailEvents;
+        pendingTailEvents = [];
+        dispatchEvents(session, tail);
+    }
+    if (hasExceededReplayBudget()) {
+        endContinuation(sessionId, replayId);
+        return;
+    }
+    scheduleContinuationTimers(sessionId, replayId);
+}
+
+function handleSnapshotReady(
+    sessionId: string,
+    replayId: string,
+): void {
+    if (postErrorDuration === 0) {
+        pendingSnapshotFlush = false;
+        scheduleImmediateRotate(sessionId, replayId);
+        return;
+    }
+    beginContinuation(sessionId, replayId);
+}
+
+function emitPostErrorEvent(
+    currentSession: ReplaySession,
+    bufferedEvent: BufferedReplayEvent,
+): void {
+    if (postErrorDuration === 0 || immediateRotatePending) {
+        pendingTailEvents.push(bufferedEvent);
+        return;
+    }
+
+    if (!initialSegmentFlushed) {
+        if (snapshot) {
+            beginContinuation(currentSession.sessionId, currentSession.replayId);
+        } else {
+            pendingTailEvents.push(bufferedEvent);
+            return;
+        }
+    }
+
+    if (!initialSegmentFlushed || !session) {
+        pendingTailEvents.push(bufferedEvent);
+        return;
+    }
+
+    dispatchEvents(currentSession, [bufferedEvent]);
+    if (hasExceededReplayBudget()) {
+        endContinuation(currentSession.sessionId, currentSession.replayId);
+        return;
+    }
+    scheduleIdleEnd(currentSession.sessionId, currentSession.replayId);
+}
+
 function startReplaySession(): void {
     const replayId = createReplayId();
     const currentSession: ReplaySession = {
@@ -279,10 +463,13 @@ function startReplaySession(): void {
                 snapshot = bufferedEvent;
                 clearReplayEvents();
                 if (
-                    pendingFlushSessionId === currentSession.sessionId &&
-                    pendingFlushTimer === undefined
+                    pendingSnapshotFlush ||
+                    (continuationActive && !initialSegmentFlushed && !immediateRotatePending)
                 ) {
-                    schedulePendingFlush(currentSession.sessionId, currentSession.replayId, 0);
+                    handleSnapshotReady(
+                        currentSession.sessionId,
+                        currentSession.replayId,
+                    );
                 }
                 return;
             }
@@ -290,8 +477,12 @@ function startReplaySession(): void {
                 bootstrapEvents.push(bufferedEvent);
                 return;
             }
-            if (frozenPreErrorEvents) {
-                addToPostErrorBuffer(bufferedEvent);
+            if (
+                continuationActive ||
+                frozenPreErrorEvents ||
+                immediateRotatePending
+            ) {
+                emitPostErrorEvent(currentSession, bufferedEvent);
             } else {
                 addToRingBuffer(bufferedEvent);
             }
@@ -308,7 +499,7 @@ function startReplaySession(): void {
     try {
         stopRecording = record(recordOptions);
     } catch {
-        clearPendingFlush();
+        clearContinuationTimers();
         session = undefined;
         activeSessionId = undefined;
         reportHandler = undefined;
@@ -330,6 +521,9 @@ export function observeReplay(
         replayOptions = { ...replayOptions, ...options };
         reportHandler = options.onReport;
         postErrorDuration = normalizePostErrorDuration(options.postErrorDuration);
+        postErrorIdleTimeout = normalizePostErrorIdleTimeout(
+            options.postErrorIdleTimeout,
+        );
         return;
     }
 
@@ -346,6 +540,9 @@ export function observeReplay(
         DEFAULT_PRE_ERROR_DURATION,
     );
     postErrorDuration = normalizePostErrorDuration(options.postErrorDuration);
+    postErrorIdleTimeout = normalizePostErrorIdleTimeout(
+        options.postErrorIdleTimeout,
+    );
     startReplaySession();
 }
 
@@ -353,7 +550,7 @@ export function observeReplay(
  * 停止录制并释放 rrweb 监听器。
  */
 export function stopObserveReplay(): void {
-    clearPendingFlush();
+    clearContinuationTimers();
     stopRecording?.();
     stopRecording = undefined;
     session = undefined;
@@ -386,46 +583,11 @@ export function getReplayErrorContext(): ReplayErrorContext | undefined {
 }
 
 /**
- * 异常发生时发送环形缓存中的回放事件，并把缓存清空。
+ * 异常发生后立即上报错误前片段，并在同一 replayId 下继续录制，
+ * 直到空闲超时、达到最长继续时长，或触达事件/体积上限。
  *
- * 错误报告应先取得上下文，再调用本函数，这样错误和回放事件会拥有
- * 同一个 sessionId 与 replayOffset。
- */
-function flushReplayBuffer(sessionId: string, replayId: string): void {
-    if (
-        !session ||
-        session.sessionId !== sessionId ||
-        session.replayId !== replayId
-    ) {
-        return;
-    }
-
-    const finishedSession = session;
-    clearPendingFlush();
-    const events = getBufferedEvents();
-    const uniqueEvents = events.filter((bufferedEvent, index) =>
-        events.findIndex((candidate) => candidate.event === bufferedEvent.event) === index,
-    );
-    dispatchReportBatch(
-        uniqueEvents.map((bufferedEvent) =>
-            createReplayReport(finishedSession, bufferedEvent),
-        ),
-        reportHandler,
-    );
-
-    // 一个错误片段对应一个独立 session，避免后续片段复用旧 snapshot。
-    stopRecording?.();
-    stopRecording = undefined;
-    session = undefined;
-    resetReplayBuffer();
-    startReplaySession();
-}
-
-/**
- * 异常发生后等待尾部窗口结束，再发送包含错误前后上下文的回放事件。
- *
- * 尾部窗口内再次发生异常时会延后同一次冲刷，避免重复上传相同事件；
- * 每条错误报告仍保留各自的 replayOffset。
+ * 继续录制期间再次异常只会延长空闲窗口；每条错误报告仍保留各自的
+ * replayOffset。`postErrorDuration: 0` 保持立即冲刷并轮换片段。
  */
 export function flushReplayOnError(
     errorContext: ReplayErrorContext | undefined = getReplayErrorContext(),
@@ -442,6 +604,19 @@ export function flushReplayOnError(
     }
 
     const sessionId = session.sessionId;
+    const replayId = session.replayId;
+
+    if (continuationActive || initialSegmentFlushed || immediateRotatePending) {
+        if (
+            continuationActive &&
+            initialSegmentFlushed &&
+            postErrorDuration > 0
+        ) {
+            scheduleIdleEnd(sessionId, replayId);
+        }
+        return;
+    }
+
     if (!frozenPreErrorEvents) {
         const errorTimestamp = getErrorTimestamp(session, errorContext);
         frozenPreErrorEvents = buffer.filter((bufferedEvent) =>
@@ -449,13 +624,21 @@ export function flushReplayOnError(
             bufferedEvent.event.timestamp <= errorTimestamp,
         );
         clearReplayEvents();
-        clearPostErrorEvents();
     }
-    if (postErrorDuration === 0 && snapshot) {
-        flushReplayBuffer(sessionId, session.replayId);
+
+    if (postErrorDuration === 0) {
+        if (snapshot) {
+            // 已有 snapshot 时同步冲刷；无 snapshot 时等其到达后再以 0ms 定时器收尾，
+            // 以便同一轮同步 emit 的尾段事件仍能并入本片段。
+            flushFullSegmentAndRotate(sessionId, replayId);
+            return;
+        }
+        pendingSnapshotFlush = true;
+        continuationActive = true;
         return;
     }
-    schedulePendingFlush(sessionId, session.replayId, postErrorDuration);
+
+    beginContinuation(sessionId, replayId);
 }
 
 /**

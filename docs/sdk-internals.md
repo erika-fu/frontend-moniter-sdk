@@ -63,9 +63,9 @@
 
 ## 6. 错误与录屏
 
-录屏运行时，错误模块先调用 `getReplayErrorContext()`，把 `sessionId`、`replayId` 和 `replayOffset` 写入错误报告，再调用 `flushReplayOnError(context)`。录屏模块平时按 `preErrorDuration` 保留最近真实事件，并以事件数和字节数限制内存；错误报告立即分发，回放片段独立收集 `postErrorDuration` 尾段后作为受限 chunk 分发，不受普通 `batchSize` 拆分影响。等待尾段不会生成虚假 rrweb 事件，片段仍强制尝试 flush 报告缓存。
+录屏运行时，错误模块先调用 `getReplayErrorContext()`，把 `sessionId`、`replayId` 和 `replayOffset` 写入错误报告，再调用 `flushReplayOnError(context)`。录屏模块平时按 `preErrorDuration` 保留最近真实事件，并以事件数和字节数限制内存；错误报告与错误前回放片段立即分发，随后在同一 `replayId` 下按 `postErrorDuration` / `postErrorIdleTimeout` 继续录制并把错误后事件流式分发，不受普通 `batchSize` 拆分影响。不会生成虚假 rrweb 事件。
 
-`sessionId` 标识一次页面录制生命周期，`replayId` 标识一次可独立播放的错误片段。片段冲刷后保留 `sessionId`，生成新的 `replayId` 和 DOM snapshot；显式停止录屏后两个 ID 都结束。
+`sessionId` 标识一次页面录制生命周期，`replayId` 标识一次可独立播放的错误片段。继续录制结束后保留 `sessionId`，生成新的 `replayId` 和 DOM snapshot；显式停止录屏后两个 ID 都结束。
 
 ## 7. 事件路径
 
@@ -76,6 +76,6 @@
 - SSR/Node 缺少浏览器对象时观察器直接跳过；
 - 回调、订阅和传输异常不会传播到页面；
 - 网络失败时缓存保留；
-- 停止录屏会取消尚未触发的尾段上报并清空内存事件；
+- 停止录屏会取消尚未触发的继续录制定时器并清空内存事件；
 - stop 函数只恢复仍是 SDK 包装函数的对象，不覆盖其他工具后来做的替换；
 - SDK 不调用 `preventDefault`，不改变业务事件、Promise 或请求结果。

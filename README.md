@@ -124,19 +124,25 @@ observe collected data locally. Subscriptions do not configure or replace
 network reporting.
 
 Session replay uses rrweb. It masks all input values by default and blocks
-elements with the `monitor-block` class or `data-monitor-mask` attribute:
+elements with the `monitor-block` class or `data-monitor-mask` attribute.
+Events stay in memory until an error; then the SDK uploads the pre-error
+segment immediately and keeps recording on the same `replayId` (default max
+5 minutes, or 30 seconds of idle) within the 1000-event / 5 MiB limits:
 
 ```ts
 frontendMonitor.replay({
   onReport: (event) => console.log(event),
   maskAllInputs: true,
+  preErrorDuration: 60_000,
+  postErrorDuration: 5 * 60 * 1000,
+  postErrorIdleTimeout: 30_000,
 });
 ```
 
-Runtime error reports collected during replay include `replayId` and
-`replayOffset`, allowing a report viewer to open the session at the error
-position. See [Replay 会话录屏](docs/replay.md) for privacy and playback
-integration details.
+Runtime error reports collected during replay include `sessionId`,
+`replayId`, and `replayOffset`, allowing a report viewer to open the session
+at the error position. See [Replay 会话录屏](docs/replay.md) for privacy and
+playback integration details.
 
 Install Vue error capture through the application plugin API. It reuses the
 configuration provided to `init`:

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { DEFAULT_RETENTION_DAYS, SQLiteReportStore } from "./store.js";
 
 const retentionDays = Number.parseInt(
@@ -10,7 +11,7 @@ if (!Number.isInteger(retentionDays) || retentionDays < 1) {
 
 const databasePath =
     process.env.REPORT_DB_PATH ??
-    new URL("./data/monitoring.sqlite", import.meta.url).pathname;
+    fileURLToPath(new URL("./data/monitoring.sqlite", import.meta.url));
 const store = new SQLiteReportStore(databasePath);
 try {
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;

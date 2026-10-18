@@ -136,18 +136,19 @@ flushReportQueue(); // boolean：发送成功 true，无缓存或失败 false
 ```ts
 monitor.replay({
   maskAllInputs: true,
-  preErrorDuration: 30000,
+  preErrorDuration: 60_000,
   bufferSize: 100,
   maxReplayEvents: 1000,
   maxReplayBytes: 5 * 1024 * 1024,
-  postErrorDuration: 2000,
+  postErrorDuration: 5 * 60 * 1000,
+  postErrorIdleTimeout: 30_000,
 });
 
 const current = monitor.getReplaySession();
 console.log(current?.sessionId, current?.replayId);
 ```
 
-运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定，`replayId` 在每个错误片段上报完成后更新。`preErrorDuration` 按时间保留错误前真实事件，`postErrorDuration` 只等待并收集错误后真实事件，不会伪造空白操作。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。服务端按 `appId` 和 `replayId` 提供 `/api/v1/replays` 列表和详情接口，每个片段最多 1000 个事件、30 分钟和 5 MiB；隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)，服务端查询和限制见 [Server 服务端文档](server.md)。
+运行时错误会携带 `sessionId`、`replayId` 和错误时刻的 `replayOffset`。`sessionId` 在本次页面录制期间稳定；错误前片段立即上报后，错误后继续录制仍使用同一 `replayId`，直到空闲 30 秒、最长 5 分钟，或触达事件/体积上限后才轮换。`preErrorDuration` 按时间保留错误前真实事件，不会伪造空白操作。使用 `monitor.createReplayUrl()` 可以生成回放定位地址。服务端按 `appId` 和 `replayId` 提供 `/api/v1/replays` 列表和详情接口，每个片段最多 1000 个事件、30 分钟和 5 MiB；隐私配置、报告结构和播放器对接见 [Replay 会话录屏](replay.md)，服务端查询和限制见 [Server 服务端文档](server.md)。
 
 ## 8. Vue 2 接入
 
@@ -419,7 +420,7 @@ stopObserveXHR();
 unsubscribe();
 ```
 
-`stopObserveReplay()` 会取消尚未触发的错误尾段定时器，并清空当前内存录屏。FP、FCP、LCP、load 和首轮 resource 属于一次性观察，没有统一的停止入口。
+`stopObserveReplay()` 会取消尚未触发的继续录制定时器，并清空当前内存录屏。FP、FCP、LCP、load 和首轮 resource 属于一次性观察，没有统一的停止入口。
 
 ## 13. 隐私
 
