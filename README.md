@@ -186,13 +186,14 @@ Then visit `http://localhost:4173/`.
 
 ## Documentation
 
-- [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA 接入
+- [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA PV 接入
 - [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
-- [Behavior 用户行为监控](docs/behavior.md)：PV、点击/触摸、hash/history 变化和 ID
+- [Behavior 用户行为监控](docs/behavior.md)：自动 PV、去重、点击/触摸、hash/history 和 ID
 - [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
 - [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位
-- [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输和事件路径
+- [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输、History 包装和事件路径
 - [Server 服务端文档](docs/server.md)：启动、版本化上报、SQLite、查询 API、SourceMap、错误和回放
+- [SPA 页面访问（PV）自动采集设计](docs/solutions/spa-page-view-tracking.md)：自动 PV 背景、方案取舍与验证要点
 
 ## Report server
 

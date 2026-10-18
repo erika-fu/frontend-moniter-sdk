@@ -19,6 +19,7 @@ frontendMonitor.init({
 });
 
 frontendMonitor.performance();
+// 默认开启 autoPageView：Hash / History 地址变化会自动记 PV。
 frontendMonitor.behavior();
 frontendMonitor.error();
 

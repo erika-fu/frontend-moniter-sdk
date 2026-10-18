@@ -20,6 +20,7 @@ frontendMonitor.init({
 
 frontendMonitor.subscribe(addReport);
 frontendMonitor.performance();
+// 默认开启 autoPageView：侧边栏 Hash 导航和 History 切换都会自动记 PV。
 frontendMonitor.behavior();
 frontendMonitor.error();
 

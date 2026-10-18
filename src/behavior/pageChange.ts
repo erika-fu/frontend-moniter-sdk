@@ -1,4 +1,5 @@
 import { dispatchReport } from "../report.js";
+import { stopObserveAutoPageView } from "./autoPageView.js";
 import { generateBehaviorId } from "./utils.js";
 
 export type PageChangeSubType = "hashchange" | "popstate";
@@ -91,6 +92,8 @@ export function observePageChange(
 
 /**
  * 移除页面变化监听器并清空已保存的页面状态。
+ *
+ * 同时还原自动 PV 安装的 History 包装，避免只停止地址变化后仍留下劫持。
  */
 export function stopObservePageChange(): void {
     if (observedWindow && hashChangeHandler) {
@@ -113,6 +116,7 @@ export function stopObservePageChange(): void {
     hashChangeHandler = undefined;
     popStateHandler = undefined;
     previousUrl = "";
+    stopObserveAutoPageView();
 }
 
 export default observePageChange;

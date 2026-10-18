@@ -234,4 +234,189 @@ describe("behavior monitoring", () => {
       }),
     );
   });
+
+  it("skips consecutive page views for the same url", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const location = { href: "https://example.com/products" };
+
+    vi.stubGlobal("window", { location });
+    vi.stubGlobal("document", { referrer: "https://search.example.com/" });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("crypto", { randomUUID: () => "pv-id" });
+
+    observePV(onReport);
+    observePV(onReport);
+
+    expect(onReport).toHaveBeenCalledTimes(1);
+
+    location.href = "https://example.com/cart";
+    observePV(onReport);
+
+    expect(onReport).toHaveBeenCalledTimes(2);
+    expect(onReport).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        subType: "pv",
+        pageUrl: "https://example.com/cart",
+      }),
+    );
+  });
+
+  it("reports the same url again after behavior monitoring stops", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/products" },
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("crypto", { randomUUID: () => "pv-id" });
+
+    observePV(onReport);
+    stopObserveBehavior();
+    observePV(onReport);
+
+    expect(onReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a page view when history or hash navigation changes the url", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const location = { href: "https://example.com/a" };
+    const listeners = new Map<string, Array<(event: Event) => void>>();
+    const history = {
+      pushState: vi.fn((...args: unknown[]) => {
+        if (typeof args[2] === "string") {
+          location.href = args[2];
+        }
+      }),
+      replaceState: vi.fn((...args: unknown[]) => {
+        if (typeof args[2] === "string") {
+          location.href = args[2];
+        }
+      }),
+    };
+    const pushState = history.pushState;
+    const replaceState = history.replaceState;
+
+    vi.stubGlobal("window", {
+      location,
+      history,
+      addEventListener: vi.fn(
+        (type: string, handler: (event: Event) => void) => {
+          const current = listeners.get(type) ?? [];
+          current.push(handler);
+          listeners.set(type, current);
+        },
+      ),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("crypto", { randomUUID: () => "pv-id" });
+
+    observeBehavior({ onReport });
+    const wrappedPushState = history.pushState;
+    observeBehavior({ onReport });
+
+    expect(history.pushState).toBe(wrappedPushState);
+    expect(listeners.get("hashchange")).toHaveLength(2);
+    expect(onReport).toHaveBeenCalledTimes(1);
+
+    history.pushState({ id: 1 }, "", "https://example.com/b");
+    history.pushState({ id: 1 }, "", "https://example.com/b");
+    history.replaceState({}, "", "https://example.com/c");
+
+    expect(pushState).toHaveBeenCalledWith({ id: 1 }, "", "https://example.com/b");
+    expect(pageViewUrls(onReport)).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+      "https://example.com/c",
+    ]);
+
+    location.href = "https://example.com/d";
+    for (const handler of listeners.get("hashchange") ?? []) {
+      handler({
+        oldURL: "https://example.com/c",
+        newURL: "https://example.com/d",
+      } as HashChangeEvent);
+    }
+    for (const handler of listeners.get("popstate") ?? []) {
+      handler({} as PopStateEvent);
+    }
+
+    expect(pageViewUrls(onReport)).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+      "https://example.com/c",
+      "https://example.com/d",
+    ]);
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "hashchange",
+        to: "https://example.com/d",
+      }),
+    );
+
+    observePV(onReport);
+    expect(pageViewUrls(onReport)).toHaveLength(4);
+
+    stopObservePageChange();
+    expect(history.pushState).toBe(pushState);
+    expect(history.replaceState).toBe(replaceState);
+
+    history.pushState({}, "", "https://example.com/e");
+    expect(pageViewUrls(onReport)).toHaveLength(4);
+  });
+
+  it("does not patch history when automatic page views are disabled", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const location = { href: "https://example.com/a" };
+    const addEventListener = vi.fn();
+    const history = {
+      pushState: vi.fn((...args: unknown[]) => {
+        if (typeof args[2] === "string") {
+          location.href = args[2];
+        }
+      }),
+      replaceState: vi.fn(),
+    };
+    const pushState = history.pushState;
+
+    vi.stubGlobal("window", {
+      location,
+      history,
+      addEventListener,
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("crypto", { randomUUID: () => "pv-id" });
+
+    observeBehavior({ autoPageView: false, onReport });
+
+    expect(history.pushState).toBe(pushState);
+    expect(
+      addEventListener.mock.calls.filter(([type]) => type === "hashchange"),
+    ).toHaveLength(1);
+
+    history.pushState({}, "", "https://example.com/b");
+    expect(pageViewUrls(onReport)).toEqual(["https://example.com/a"]);
+
+    observePV(onReport);
+    expect(pageViewUrls(onReport)).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+  });
 });
+
+function pageViewUrls(
+  onReport: ReturnType<typeof vi.fn<(data: BehaviorReportData) => void>>,
+): string[] {
+  const urls: string[] = [];
+  for (const [report] of onReport.mock.calls) {
+    if (report.subType === "pv") {
+      urls.push(report.pageUrl);
+    }
+  }
+  return urls;
+}

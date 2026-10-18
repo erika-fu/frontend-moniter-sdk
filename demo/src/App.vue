@@ -7,6 +7,7 @@ import {
 } from "./replayControl";
 import {
     failResource,
+    pushHistoryRoute,
     rejectPromise,
     requestWithFetch,
     requestWithXHR,
@@ -91,20 +92,34 @@ function triggerVueError(): void {
                         <p class="section-kicker">BEHAVIOR</p>
                         <h2 id="behavior-title">页面访问、点击与路由</h2>
                     </div>
-                    <span class="section-note">点击控件会由 SDK 自动采集</span>
+                    <span class="section-note">
+                        点击会自动采集；Hash / History 切换会自动记 PV
+                    </span>
                 </div>
                 <div class="scenario-grid">
                     <button
                         type="button"
                         @click="switchRoute('#/scenario/orders')"
                     >
-                        切换到订单路由
+                        Hash 切到订单
                     </button>
                     <button
                         type="button"
                         @click="switchRoute('#/scenario/profile')"
                     >
-                        切换到个人路由
+                        Hash 切到个人
+                    </button>
+                    <button
+                        type="button"
+                        @click="pushHistoryRoute('orders')"
+                    >
+                        History 切到订单
+                    </button>
+                    <button
+                        type="button"
+                        @click="pushHistoryRoute('profile')"
+                    >
+                        History 切到个人
                     </button>
                 </div>
             </section>

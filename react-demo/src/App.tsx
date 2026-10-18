@@ -98,7 +98,7 @@ const coverageGroups: Array<{
     {
         title: "用户行为",
         icon: MousePointerClick,
-        items: ["PV", "Click", "Touch", "Hash", "History"],
+        items: ["PV", "Auto PV", "Click", "Touch", "Hash", "History"],
     },
     {
         title: "异常监控",
@@ -242,6 +242,12 @@ function TestControls(): ReactNode {
         image.src = `/sdk-react-resource-${Date.now()}.png`;
     }
 
+    function pushHistoryRoute(route: string): void {
+        const url = new URL(window.location.href);
+        url.searchParams.set("route", route);
+        window.history.pushState({ route }, "", url);
+    }
+
     function resetBoundary(): void {
         setShouldCrash(false);
         setCrashKey((current) => current + 1);
@@ -254,7 +260,9 @@ function TestControls(): ReactNode {
                     <span className="section-label">EVENT LAB</span>
                     <h2 id="test-title">事件触发器</h2>
                 </div>
-                <span className="section-note">点击操作也会生成行为报告</span>
+                <span className="section-note">
+                    点击会生成行为报告；Hash / History 切换会自动记 PV
+                </span>
             </div>
             <div className="action-grid">
                 <button type="button" onClick={requestWithFetch}>
@@ -264,6 +272,20 @@ function TestControls(): ReactNode {
                 <button type="button" onClick={requestWithXHR}>
                     <Network aria-hidden="true" />
                     <span>XHR 请求</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => pushHistoryRoute("orders")}
+                >
+                    <Route aria-hidden="true" />
+                    <span>History 订单</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => pushHistoryRoute("profile")}
+                >
+                    <Route aria-hidden="true" />
+                    <span>History 个人</span>
                 </button>
                 <button type="button" onClick={throwJavaScriptError}>
                     <TerminalSquare aria-hidden="true" />

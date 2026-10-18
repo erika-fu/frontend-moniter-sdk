@@ -216,7 +216,7 @@ Vue 2 的职责划分：
 - `Vue.use(monitor)`：捕获 render、生命周期、事件处理器等进入 `Vue.config.errorHandler` 的框架错误；
 - `monitor.error()`：捕获资源错误、未捕获 JavaScript 错误和未处理 Promise rejection；
 - `monitor.performance()`：采集页面指标与 Fetch/XHR；
-- `monitor.behavior()`：采集首次 PV、点击和原生 hash/history 变化。
+- `monitor.behavior()`：采集当前页 PV，并在 History/Hash 地址变化时继续记 PV；同时采集点击和原生 hash/history 变化。
 
 ## 9. Vue 3 接入
 
@@ -362,22 +362,73 @@ componentDidCatch(error: Error, info: ErrorInfo): void {
 
 Error Boundary 只能捕获 React 支持的组件树错误，不能捕获事件处理器、异步回调、服务端渲染以及 Boundary 自身的错误。`monitor.error()` 会补充浏览器未捕获 JavaScript 和 Promise 错误，但已经被业务 `try/catch` 消化的异常需要业务主动调用自己的上报逻辑。
 
-## 11. Vue Router 和 React Router
+## 11. SPA 页面访问（PV）与路由接入
 
-首次调用 `monitor.behavior()` 会立即生成一条 PV。SDK 能自动观察 `hashchange` 和 `popstate`，但路由库常通过 `history.pushState`/`replaceState` 切换页面，这两个 API 不会自动触发上述事件。
+### 11.1 默认行为
 
-因此应在路由成功后补充 PV：
+`monitor.behavior()` 会立即记录当前页 PV，并默认开启 `autoPageView`，继续监听：
+
+- `hashchange`
+- `popstate`
+- `history.pushState`
+- `history.replaceState`
+
+History 模式和 Hash 模式的路由跳转都会自动产生 `subType: "pv"`。连续相同的完整 `pageUrl`（含 search、hash）只上报一次。
+
+同时，`behavior()` 仍会启动 `pageChange`，产出 `hashchange` / `popstate` 底层信号。产品漏斗应消费 `pv`，不要把 `pageChange` 当访问量。
+
+自动监听只能确认 URL 变了。它不能确认：
+
+- 路由守卫是否取消；
+- 重定向最终落点；
+- 页面组件是否已渲染；
+- 路由模板名（例如 `/users/:id`）与实际地址的对应关系。
+
+模块字段、去重规则和 History 包装细节见 [Behavior 用户行为监控](behavior.md)；设计取舍见 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)。
+
+### 11.2 推荐接入方式
+
+| 场景 | 推荐做法 |
+| --- | --- |
+| 通用 SPA / 快速接入 | `monitor.behavior()`，依赖默认自动 PV |
+| 能控制路由代码，要“导航成功才算” | 默认自动 PV + 在 `afterEach` / `useLocation` 中调用 `observePV()` |
+| 完全不信任 URL 猜测 | `monitor.behavior({ autoPageView: false })`，只在路由成功钩子里 `observePV()` |
+| 微前端卸载 / 测试清理 | `stopObserveBehavior()`，还原 History 并清除去重 |
+
+### 11.3 Vue Router
+
+默认自动 PV 已覆盖大多数 History / Hash 跳转。若要在导航确认成功后再补一条精确 PV：
 
 ```ts
 import { observePV } from "frontend-moniter-sdk";
+import router from "./router";
 
-// Vue Router
+monitor.behavior();
+
 router.afterEach(() => {
   observePV();
 });
 ```
 
-React Router 可在路由位置变化时调用：
+去重仍然生效：首屏 `behavior()` 与首次 `afterEach` 若落在同一 `pageUrl`，不会记两次。
+
+只想使用路由钩子时：
+
+```ts
+monitor.behavior({ autoPageView: false });
+
+router.afterEach((to) => {
+  // 也可按业务规则决定是否上报，例如忽略某些 meta
+  if (to.meta.trackPageView === false) {
+    return;
+  }
+  observePV();
+});
+```
+
+`autoPageView: false` 时，`behavior()` 仍会记录启动时的当前页；钩子对同一地址再调用会被去重。若希望“第一页也完全由 afterEach 决定”，需要自行避免启动瞬间与钩子的竞态，或接受启动时那一条首屏 PV。
+
+### 11.4 React Router
 
 ```tsx
 import { useEffect } from "react";
@@ -395,9 +446,49 @@ export function RouteMonitor(): null {
 }
 ```
 
-如果入口已经调用 `monitor.behavior()`，首次渲染又立即执行上述路由钩子，可能产生两条初始 PV。业务应选择一种首次 PV 策略：入口自动 PV，或完全由路由钩子记录。
+在应用根部渲染 `<RouteMonitor />`，并照常调用 `monitor.behavior()`。Effect 与自动 PV 共用去重。
 
-React 18 开发模式下，`StrictMode` 可能重复执行 Effect；使用路由钩子记录 PV 时，开发环境需要自行去重。生产构建不受该开发检查机制影响。
+只认路由位置变化时：
+
+```ts
+monitor.behavior({ autoPageView: false });
+```
+
+React 18 开发模式下，`StrictMode` 可能重复执行 Effect。相同地址的连续 PV 会被去重，同一次进入不会记两次。生产构建不受该开发检查机制影响。
+
+### 11.5 无路由框架时的手写导航
+
+没有 Vue / React Router 时，只要最终改到了 URL，默认自动 PV 仍然有效：
+
+```ts
+// Hash
+window.location.hash = "#/orders";
+
+// History
+const url = new URL(window.location.href);
+url.searchParams.set("route", "orders");
+window.history.pushState({ route: "orders" }, "", url);
+```
+
+仓库内 Vue demo 与 React demo 就是这种用法：默认 `behavior()`，再用 Hash / `pushState` 按钮验证自动 PV。详见 [demo/src/scenarios.ts](../demo/src/scenarios.ts) 与 [react-demo/src/App.tsx](../react-demo/src/App.tsx)。
+
+### 11.6 消费与排查
+
+```ts
+monitor.subscribe((data) => {
+  if (data.type === "behavior" && data.subType === "pv") {
+    console.log("page view", data.pageUrl, data.referrer);
+  }
+});
+```
+
+排查清单：
+
+1. 是否先 `init` 再 `behavior`，避免首条 PV 用到空配置；
+2. History 模式是否真的调用了 `pushState`（自动 PV 依赖包装）；
+3. 是否误把 `hashchange` / `popstate` 报告当成 PV；
+4. 连续相同 URL 被跳过是否符合预期；
+5. 关闭 `autoPageView` 后是否仍有业务侧 `observePV()`。
 
 ## 12. 停止监听
 
@@ -424,4 +515,4 @@ unsubscribe();
 
 ## 13. 隐私
 
-click 含目标 HTML，error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。
+click 含目标 HTML，PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。

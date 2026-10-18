@@ -37,3 +37,12 @@ export function failResource(): void {
 export function switchRoute(route: string): void {
     window.location.hash = route;
 }
+
+/**
+ * 用 History API 切换查询参数，触发 SDK 对 pushState 的自动 PV。
+ */
+export function pushHistoryRoute(route: string): void {
+    const url = new URL(window.location.href);
+    url.searchParams.set("route", route);
+    window.history.pushState({ route }, "", url);
+}

@@ -71,11 +71,24 @@
 
 `getSerializableEventPath` 优先 `event.composedPath()`，旧环境回退 `event.path`，将 Window、Document、tagName、nodeName 或构造器名称转换为 `string[]`。不保存 DOM 对象是为了避免循环引用和不可序列化。
 
-## 8. 边界规则
+## 8. 行为模块中的 History 包装
+
+行为自动 PV（`src/behavior/autoPageView.ts`）会包装 `history.pushState` 和 `history.replaceState`，以便覆盖路由库常用、但不会触发 `popstate` 的导航。包装策略与 Fetch / XHR 一致：
+
+1. 保存原始方法；
+2. 用包装函数替换，先调用原方法，成功返回后再调用 `observePV()`；
+3. 不修改参数和返回值；
+4. `stopObserveAutoPageView()` / `stopObserveBehavior()` / `stopObservePageChange()` 仅在当前方法仍等于 SDK 包装函数时还原。
+
+PV 去重状态保存在 `src/behavior/pv.ts` 的模块级变量中。`stopObserveBehavior()` 会调用 `clearPageViewDedup()`，避免停止后再启动时被旧地址挡住首条 PV。
+
+`pageChange` 与自动 PV 并行：前者产出 `hashchange` / `popstate` 底层信号，后者统一产出 `subType: "pv"`。细节见 [Behavior 用户行为监控](behavior.md) 和 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)。
+
+## 9. 边界规则
 
 - SSR/Node 缺少浏览器对象时观察器直接跳过；
 - 回调、订阅和传输异常不会传播到页面；
 - 网络失败时缓存保留；
 - 停止录屏会取消尚未触发的继续录制定时器并清空内存事件；
-- stop 函数只恢复仍是 SDK 包装函数的对象，不覆盖其他工具后来做的替换；
-- SDK 不调用 `preventDefault`，不改变业务事件、Promise 或请求结果。
+- stop 函数只恢复仍是 SDK 包装函数的对象（含 `fetch`、XHR 原型方法、History 方法），不覆盖其他工具后来做的替换；
+- SDK 不调用 `preventDefault`，不改变业务事件、Promise、History 导航或请求结果。

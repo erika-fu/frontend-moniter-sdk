@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     failResource,
+    pushHistoryRoute,
     requestWithFetch,
     requestWithXHR,
     switchRoute,
@@ -78,5 +79,25 @@ describe("demo monitoring scenarios", () => {
         );
         expect(append).toHaveBeenCalledWith(image);
         expect(image).toHaveProperty("src");
+    });
+
+    it("pushes history routes through the History API", () => {
+        const pushState = vi.fn();
+        vi.stubGlobal("window", {
+            location: {
+                href: "https://demo.example/app#/console",
+            },
+            history: { pushState },
+        });
+
+        pushHistoryRoute("orders");
+
+        expect(pushState).toHaveBeenCalledWith(
+            { route: "orders" },
+            "",
+            expect.objectContaining({
+                search: "?route=orders",
+            }),
+        );
     });
 });
