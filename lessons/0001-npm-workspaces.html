@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 1 课：npm workspace 是什么</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="kicker">Frontend SDK / Lesson 01</p>
+      <h1>把一个仓库当成一组小项目管理</h1>
+      <p class="lede">npm workspace 不是另一种包管理器，而是 npm 管理“同一仓库里多个 package”的能力。</p>
+    </header>
+
+    <h2>先抓住一个画面</h2>
+    <p>普通项目只有一个 <code>package.json</code>。当一个仓库同时包含 SDK、服务端、演示站和管理平台时，每个部分都需要自己的脚本和依赖，但它们又属于同一个工程。这时就可以让根目录成为“总项目”，让子目录成为 workspace。</p>
+    <pre>frontend-moniter-sdk/
+├── package.json       ← 总项目：登记 workspaces
+├── demo/package.json  ← 一个 workspace
+├── platform/          ← 一个 workspace
+├── react-demo/        ← 一个 workspace
+└── server/            ← 一个 workspace</pre>
+
+    <h2>在本仓库里找证据</h2>
+    <p>根目录的 <code>package.json</code> 写着：</p>
+    <pre>"workspaces": [
+  "demo",
+  "platform",
+  "react-demo",
+  "server"
+]</pre>
+    <p>这表示 npm 会把这四个目录识别为 workspace。根目录还提供了：</p>
+    <pre>"dev:server": "npm --workspace server run dev"
+"build:all": "npm run build && npm run build:server && ..."</pre>
+    <p>第一条命令的意思是：“进入名为 <code>server</code> 的 workspace，执行它自己的 <code>dev</code> 脚本。”这里的 <code>server</code> 来自 <code>server/package.json</code> 的 <code>name</code>。</p>
+
+    <div class="grid">
+      <div class="term"><strong>根项目</strong>负责统一安装、编排命令和共享工具链。</div>
+      <div class="term"><strong>workspace</strong>仍是独立 package，有自己的依赖和 scripts。</div>
+      <div class="term"><strong>npm --workspace</strong>把命令定向到某一个子 package。</div>
+    </div>
+
+    <h2>它解决什么问题</h2>
+    <p>没有 workspace 时，你可能要进入每个目录分别安装依赖、运行脚本，还要手动维护多个项目之间的一致性。使用 workspace 后，根目录可以统一执行：</p>
+    <pre>npm install
+npm run typecheck:all
+npm run build:all</pre>
+    <p>同时，子项目仍然可以单独运行：</p>
+    <pre>npm run dev:server
+npm run dev:platform
+npm run dev:react-demo</pre>
+    <div class="note"><strong>别混淆：</strong>workspace 只解决“多个 package 如何组织和调度”。它不自动把所有源码打包成一个产物，也不等于 monorepo 工具；Lerna、Nx、Turborepo 等工具可以在 workspace 之上继续提供缓存、任务依赖和发布能力。</div>
+
+    <h2>一分钟检验</h2>
+    <div class="quiz">
+      <p><strong>题目：</strong>如果只想启动 <code>server</code>，下面哪条命令最符合本仓库的 workspace 用法？</p>
+      <p>
+        <button data-answer="a">A. npm run dev</button>
+        <button data-answer="b">B. npm --workspace server run dev</button>
+        <button data-answer="c">C. npm install server</button>
+      </p>
+      <p id="feedback" aria-live="polite"></p>
+    </div>
+
+    <h2>下一步</h2>
+    <p>打开<a href="../reference/npm-workspaces.html"> npm workspaces 速查表</a>，再观察根目录和 <code>server/package.json</code> 的 scripts 如何配合。官方主资料是 <a href="https://docs.npmjs.com/cli/v11/using-npm/workspaces" target="_blank" rel="noreferrer">npm 官方 Workspaces 文档</a>。</p>
+    <footer>遇到不清楚的地方，直接问我；下一课可以继续练习“根依赖、子项目依赖和 node_modules 到底如何分布”。</footer>
+  </main>
+  <script>
+    document.querySelectorAll("[data-answer]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#feedback").textContent =
+          button.dataset.answer === "b"
+            ? "正确：--workspace 把脚本定向到 server。"
+            : "再想一下：需要同时指定目标 workspace 和它的脚本。";
+      });
+    });
+  </script>
+</body>
+</html>

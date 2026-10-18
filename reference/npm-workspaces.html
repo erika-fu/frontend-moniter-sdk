@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>npm workspaces 速查</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+  <main>
+    <p class="kicker">Reference</p>
+    <h1>npm workspaces 速查</h1>
+    <h2>核心模型</h2>
+    <p>workspace 是同一个仓库中的一个独立 npm package。根 package 通过 <code>workspaces</code> 字段登记它们；npm 安装依赖时可以统一处理整个仓库。</p>
+    <p><strong>概念边界：</strong>monorepo 是“一个仓库放多个项目”的组织策略；workspaces 是 npm、pnpm 或 Yarn 管理这些子 package 的能力。二者经常一起出现，但不是同义词。</p>
+    <pre>{
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"]
+}</pre>
+    <h2>常用命令</h2>
+    <pre># 在指定 workspace 执行脚本
+npm --workspace server run dev
+
+# 在所有 workspace 执行脚本
+npm run test --workspaces
+
+# 给指定 workspace 安装依赖
+npm install lodash --workspace server
+
+# 查看 workspace 列表
+npm query .workspace</pre>
+    <h2>本仓库映射</h2>
+    <pre>根目录 package.json
+├── demo
+├── platform
+├── react-demo
+└── server</pre>
+    <p><a href="../lessons/0001-npm-workspaces.html">第 1 课：npm workspaces</a> · <a href="../lessons/0002-workspaces-vs-monorepo.html">第 2 课：workspaces 与 monorepo</a></p>
+  </main>
+</body>
+</html>

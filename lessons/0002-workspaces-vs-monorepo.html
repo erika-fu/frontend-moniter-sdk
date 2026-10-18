@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 2 课：workspaces 与 monorepo</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="kicker">Frontend SDK / Lesson 02</p>
+      <h1>组织策略，还是包管理能力？</h1>
+      <p class="lede">一句话：monorepo 是“怎么放代码”，workspaces 是“怎么管理这些包”。</p>
+    </header>
+
+    <h2>先分清抽象层级</h2>
+    <div class="grid">
+      <div class="term"><strong>monorepo</strong>一种仓库策略：把多个项目或 package 放在同一个 Git 仓库中。</div>
+      <div class="term"><strong>workspaces</strong>一种工具能力：让 npm、pnpm 或 Yarn 识别这些子 package，并统一安装和运行命令。</div>
+    </div>
+    <p>所以它们不是同义词。前者回答“代码放在哪里”，后者回答“包如何被管理”。</p>
+
+    <h2>它们如何配合</h2>
+    <pre>一个 monorepo
+├── packages/sdk
+├── packages/ui
+├── apps/demo
+└── package.json
+    └── workspaces: ["packages/*", "apps/*"]</pre>
+    <p>上面整个目录是 monorepo；根目录的 <code>workspaces</code> 配置则告诉包管理器：这些目录是可管理的 workspace。</p>
+
+    <h2>三种组合</h2>
+    <p><strong>最常见：</strong>monorepo + workspaces。比如本仓库把 SDK、服务端、Vue 演示、React 演示放在一起，并在根目录声明四个 workspace。</p>
+    <p><strong>也可以只有 monorepo：</strong>多个项目放在一个仓库里，但没有统一的 workspace 配置，靠各目录自己的脚本和依赖管理。这仍是 monorepo，只是协作成本更高。</p>
+    <p><strong>也可以把 workspace 理解为 package 管理范围：</strong>实际使用时它通常出现在 monorepo 中；但“workspace”这个词本身强调的是包管理器的工作区，而不是 Git 仓库策略。</p>
+
+    <div class="note"><strong>补充：</strong>npm workspaces、Yarn workspaces、pnpm workspaces 是相似但不完全相同的实现。Nx、Turborepo、Lerna 等则通常提供任务编排、缓存、依赖图或发布能力，可以建立在 workspaces 之上。</div>
+
+    <h2>和 polyrepo 对比</h2>
+    <pre>monorepo:  一个仓库 / 多个 package
+polyrepo:  多个仓库 / 多个 package</pre>
+    <p>选择 monorepo 往往是为了方便共享代码、统一变更和跨项目测试；代价是仓库规模、权限边界、构建速度和发布流程需要额外治理。</p>
+
+    <h2>一分钟检验</h2>
+    <div class="quiz">
+      <p><strong>判断：</strong>“只要使用了 npm workspaces，就一定是在使用 monorepo。”</p>
+      <p>
+        <button data-answer="a">正确</button>
+        <button data-answer="b">不正确</button>
+      </p>
+      <p id="feedback" aria-live="polite"></p>
+    </div>
+
+    <h2>参考</h2>
+    <p>继续查看 <a href="../reference/npm-workspaces.html">npm workspaces 速查表</a>，并阅读 <a href="https://docs.npmjs.com/cli/v11/using-npm/workspaces" target="_blank" rel="noreferrer">npm 官方 Workspaces 文档</a>。</p>
+    <footer>下一步可以学习：workspace 之间如何互相依赖，以及 npm 如何在本地链接它们。</footer>
+  </main>
+  <script>
+    document.querySelectorAll("[data-answer]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#feedback").textContent =
+          button.dataset.answer === "b"
+            ? "正确：workspaces 是包管理能力，不等于仓库组织策略。"
+            : "不准确：monorepo 是仓库策略，workspaces 是包管理器能力。";
+      });
+    });
+  </script>
+</body>
+</html>
