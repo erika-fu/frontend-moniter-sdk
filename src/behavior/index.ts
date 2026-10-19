@@ -43,6 +43,12 @@ export interface BehaviorMonitoringOptions {
      * 默认开启。设为 false 时只保留启动时的一次 PV，后续由业务调用 `observePV()`。
      */
     autoPageView?: boolean;
+    /**
+     * 允许上报点击的 DOM 属性名列表。
+     *
+     * 省略或为空时不采集点击，不影响 PV 与地址变化上报。
+     */
+    clickAttributes?: string[];
 }
 
 /**
@@ -53,7 +59,12 @@ export interface BehaviorMonitoringOptions {
 export function observeBehavior(
     options: BehaviorMonitoringOptions = {},
 ): void {
-    observeClick(options.onReport);
+    observeClick({
+        ...(options.onReport ? { onReport: options.onReport } : {}),
+        ...(options.clickAttributes
+            ? { clickAttributes: options.clickAttributes }
+            : {}),
+    });
     observePageChange(options.onReport);
     if (options.autoPageView === false) {
         stopObserveAutoPageView();

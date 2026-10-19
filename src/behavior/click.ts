@@ -1,64 +1,158 @@
 import { dispatchReport } from "../report.js";
 import { getSerializableEventPath } from "../eventPath.js";
 
-export type ClickEventType = "mousedown" | "touchstart";
+export type ClickEventType = "click";
 
 /**
- * 用户点击或触摸上报数据。
+ * 用户点击上报数据。
  */
 export interface ClickReportData {
     /** 监控数据的一级分类。 */
     type: "behavior";
     /** 监控数据的二级分类。 */
     subType: "click";
-    /** 事件目标的 HTML 标签名。 */
+    /** 命中允许列表属性的目标元素标签名。 */
     target: string;
     /** 事件相对于当前页面时间原点的毫秒数。 */
     startTime: number;
-    /** 事件目标的内部 HTML。 */
-    innerHtml: string;
-    /** 事件目标自身及其内部内容的 HTML。 */
-    outerHtml: string;
-    /** 事件目标的布局宽度，单位为 CSS 像素。 */
+    /** 目标元素的布局宽度，单位为 CSS 像素。 */
     width: number;
-    /** 事件目标的布局高度，单位为 CSS 像素。 */
+    /** 目标元素的布局高度，单位为 CSS 像素。 */
     height: number;
     /** 触发采集的原始事件类型。 */
     eventType: ClickEventType;
+    /** 目标元素上命中的允许列表属性及其值。 */
+    attributes: Record<string, string>;
     /** 事件传播路径；运行环境不支持时不提供。 */
     path?: string[];
 }
 
 export type ClickReportHandler = (reportData: ClickReportData) => void;
 
+/**
+ * 点击监听配置。
+ */
+export interface ClickMonitoringOptions {
+    /** 接收点击监控数据。 */
+    onReport?: ClickReportHandler;
+    /**
+     * 允许上报的 DOM 属性名列表。
+     *
+     * 省略或规范化后为空时不安装点击监听器、不上报点击。
+     * 传入数组会被复制并做去空白、去重处理。
+     */
+    clickAttributes?: string[];
+}
+
 interface ClickTarget extends EventTarget {
     tagName: string;
-    innerHTML?: string;
-    outerHTML?: string;
     offsetWidth?: number;
     offsetHeight?: number;
+    hasAttribute(name: string): boolean;
+    getAttribute(name: string): string | null;
 }
 
 let observedWindow: Window | undefined;
 let reportHandler: ClickReportHandler | undefined;
-let mouseDownHandler: ((event: Event) => void) | undefined;
-let touchStartHandler: ((event: Event) => void) | undefined;
+let allowedAttributes: string[] = [];
+let clickHandler: ((event: Event) => void) | undefined;
+
+/**
+ * 复制、修剪空白并去重属性名；忽略非字符串与空名称。
+ */
+function normalizeClickAttributes(
+    attributes: readonly unknown[] | undefined,
+): string[] {
+    if (!attributes) {
+        return [];
+    }
+
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+
+    for (const value of attributes) {
+        if (typeof value !== "string") {
+            continue;
+        }
+
+        const name = value.trim();
+        if (!name || seen.has(name)) {
+            continue;
+        }
+
+        seen.add(name);
+        normalized.push(name);
+    }
+
+    return normalized;
+}
 
 function isClickTarget(target: EventTarget | null): target is ClickTarget {
     return (
         target !== null &&
+        typeof target === "object" &&
         "tagName" in target &&
-        typeof (target as { tagName?: unknown }).tagName === "string"
+        typeof (target as { tagName?: unknown }).tagName === "string" &&
+        typeof (target as { hasAttribute?: unknown }).hasAttribute ===
+            "function" &&
+        typeof (target as { getAttribute?: unknown }).getAttribute ===
+            "function"
     );
 }
 
-function handleInteraction(eventType: ClickEventType, event: Event): void {
-    if (!isClickTarget(event.target)) {
+function getEventPath(event: Event): EventTarget[] {
+    const legacyEvent = event as Event & { path?: EventTarget[] };
+    if (typeof event.composedPath === "function") {
+        return event.composedPath();
+    }
+    return legacyEvent.path ?? [];
+}
+
+function findMarkedTarget(
+    event: Event,
+    attributes: readonly string[],
+): ClickTarget | undefined {
+    for (const node of getEventPath(event)) {
+        if (!isClickTarget(node)) {
+            continue;
+        }
+
+        for (const name of attributes) {
+            if (node.hasAttribute(name)) {
+                return node;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function collectAllowedAttributes(
+    target: ClickTarget,
+    attributes: readonly string[],
+): Record<string, string> {
+    const matched: Record<string, string> = {};
+
+    for (const name of attributes) {
+        if (target.hasAttribute(name)) {
+            matched[name] = target.getAttribute(name) ?? "";
+        }
+    }
+
+    return matched;
+}
+
+function handleClick(event: Event): void {
+    if (allowedAttributes.length === 0) {
+        return;
+    }
+
+    const target = findMarkedTarget(event, allowedAttributes);
+    if (!target) {
         return;
     }
 
     const path = getSerializableEventPath(event);
-    const target = event.target;
 
     dispatchReport(
         {
@@ -66,24 +160,32 @@ function handleInteraction(eventType: ClickEventType, event: Event): void {
             subType: "click",
             target: target.tagName,
             startTime: event.timeStamp,
-            innerHtml: target.innerHTML ?? "",
-            outerHtml: target.outerHTML ?? "",
             width: target.offsetWidth ?? 0,
             height: target.offsetHeight ?? 0,
-            eventType,
+            eventType: "click",
+            attributes: collectAllowedAttributes(target, allowedAttributes),
             ...(path ? { path } : {}),
         },
         reportHandler,
     );
 }
 
+function detachClickListener(): void {
+    if (observedWindow && clickHandler) {
+        observedWindow.removeEventListener("click", clickHandler, true);
+    }
+
+    observedWindow = undefined;
+    clickHandler = undefined;
+}
+
 /**
- * 监听鼠标按下和触摸开始事件。
+ * 按属性允许列表监听捕获阶段的 `click` 事件。
  *
- * 使用捕获阶段可在业务代码停止事件传播前完成采集。重复调用只更新回调，
- * 不会重复安装监听器。
+ * 未配置或规范化后为空时不安装监听器。重复调用会更新回调与允许列表，
+ * 不会重复安装监听器；允许列表变空时移除已有监听器。
  */
-export function observeClick(onReport?: ClickReportHandler): void {
+export function observeClick(options: ClickMonitoringOptions = {}): void {
     if (
         typeof window === "undefined" ||
         typeof window.addEventListener !== "function"
@@ -91,46 +193,31 @@ export function observeClick(onReport?: ClickReportHandler): void {
         return;
     }
 
-    if (observedWindow === window) {
-        reportHandler = onReport;
+    reportHandler = options.onReport;
+    allowedAttributes = normalizeClickAttributes(options.clickAttributes);
+
+    if (allowedAttributes.length === 0) {
+        detachClickListener();
         return;
     }
 
-    stopObserveClick();
-    observedWindow = window;
-    reportHandler = onReport;
-    mouseDownHandler = (event: Event) =>
-        handleInteraction("mousedown", event);
-    touchStartHandler = (event: Event) =>
-        handleInteraction("touchstart", event);
+    if (observedWindow === window && clickHandler) {
+        return;
+    }
 
-    observedWindow.addEventListener("mousedown", mouseDownHandler, true);
-    observedWindow.addEventListener("touchstart", touchStartHandler, true);
+    detachClickListener();
+    observedWindow = window;
+    clickHandler = handleClick;
+    observedWindow.addEventListener("click", clickHandler, true);
 }
 
 /**
- * 移除用户交互监听器并释放保存的回调。
+ * 移除点击监听器并释放保存的回调与允许列表。
  */
 export function stopObserveClick(): void {
-    if (observedWindow && mouseDownHandler) {
-        observedWindow.removeEventListener(
-            "mousedown",
-            mouseDownHandler,
-            true,
-        );
-    }
-    if (observedWindow && touchStartHandler) {
-        observedWindow.removeEventListener(
-            "touchstart",
-            touchStartHandler,
-            true,
-        );
-    }
-
-    observedWindow = undefined;
+    detachClickListener();
     reportHandler = undefined;
-    mouseDownHandler = undefined;
-    touchStartHandler = undefined;
+    allowedAttributes = [];
 }
 
 export default observeClick;

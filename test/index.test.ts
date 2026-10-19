@@ -13,6 +13,9 @@ import {
   SDK_NAME,
   setConfig,
   subscribe,
+  type BehaviorMonitoringOptions,
+  type ClickMonitoringOptions,
+  type ClickReportData,
 } from "../src/index.js";
 
 describe("SDK entry point", () => {
@@ -29,6 +32,27 @@ describe("SDK entry point", () => {
   it("re-exports the behavior monitoring API", () => {
     expect(observeBehavior).toBeTypeOf("function");
     expect(observeClick).toBeTypeOf("function");
+
+    const clickOptions = {
+      clickAttributes: ["data-track"],
+    } satisfies ClickMonitoringOptions;
+    const behaviorOptions = {
+      clickAttributes: ["data-track"],
+    } satisfies BehaviorMonitoringOptions;
+    const clickReport = {
+      type: "behavior",
+      subType: "click",
+      target: "BUTTON",
+      startTime: 1,
+      width: 1,
+      height: 1,
+      eventType: "click",
+      attributes: { "data-track": "buy" },
+    } satisfies ClickReportData;
+
+    expect(clickOptions.clickAttributes).toEqual(["data-track"]);
+    expect(behaviorOptions.clickAttributes).toEqual(["data-track"]);
+    expect(clickReport).not.toHaveProperty("innerHtml");
   });
 
   it("exports the SDK and framework error APIs", () => {

@@ -143,12 +143,19 @@ describe("reporting after SDK initialization", () => {
   it("reports errors after a click path contains circular DOM references", () => {
     const images: Array<{ src: string }> = [];
     const eventHandlers = new Map<string, (event: Event) => void>();
+    const attributes: Record<string, string> = { "data-track": "vue-error" };
     const target = {
       tagName: "BUTTON",
-      innerHTML: "Vue error",
-      outerHTML: "<button>Vue error</button>",
       offsetWidth: 100,
       offsetHeight: 36,
+      hasAttribute(name: string) {
+        return Object.prototype.hasOwnProperty.call(attributes, name);
+      },
+      getAttribute(name: string) {
+        return Object.prototype.hasOwnProperty.call(attributes, name)
+          ? attributes[name]
+          : null;
+      },
     };
     const windowTarget: { self?: unknown } = {};
     windowTarget.self = windowTarget;
@@ -196,8 +203,8 @@ describe("reporting after SDK initialization", () => {
       isImageUpload: true,
       batchSize: 1,
     });
-    observeClick();
-    eventHandlers.get("mousedown")?.({
+    observeClick({ clickAttributes: ["data-track"] });
+    eventHandlers.get("click")?.({
       target,
       timeStamp: 24,
       composedPath: () => [target, windowTarget],
@@ -218,6 +225,7 @@ describe("reporting after SDK initialization", () => {
       expect.objectContaining({
         type: "behavior",
         subType: "click",
+        attributes: { "data-track": "vue-error" },
       }),
       expect.objectContaining({
         type: "error",

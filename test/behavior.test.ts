@@ -112,17 +112,87 @@ describe("behavior monitoring", () => {
     );
   });
 
-  it("reports mouse and touch interactions with element details", () => {
+  it("does not install a click listener when clickAttributes are omitted or empty", () => {
+    const addEventListener = vi.fn();
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener: vi.fn(),
+    });
+
+    observeClick({ onReport });
+    observeClick({ onReport, clickAttributes: [] });
+    observeClick({
+      onReport,
+      clickAttributes: ["", "  ", "\t", 1, null] as unknown as string[],
+    });
+
+    expect(addEventListener).not.toHaveBeenCalled();
+    expect(onReport).not.toHaveBeenCalled();
+  });
+
+  it("is safe when window is unavailable", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+
+    vi.stubGlobal("window", undefined);
+
+    expect(() =>
+      observeClick({ onReport, clickAttributes: ["data-track"] }),
+    ).not.toThrow();
+    expect(() => stopObserveClick()).not.toThrow();
+    expect(onReport).not.toHaveBeenCalled();
+  });
+
+  it("reports again after stop and restart", () => {
     const addEventListener = vi.fn();
     const removeEventListener = vi.fn();
     const onReport = vi.fn<(data: BehaviorReportData) => void>();
-    const target = {
-      tagName: "BUTTON",
-      innerHTML: "<span>Buy</span>",
-      outerHTML: "<button><span>Buy</span></button>",
-      offsetWidth: 120,
-      offsetHeight: 36,
-    };
+    const target = createMarkedElement("BUTTON", { "data-track": "again" });
+
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener,
+    });
+
+    observeClick({ onReport, clickAttributes: ["data-track"] });
+    stopObserveClick();
+    observeClick({ onReport, clickAttributes: ["data-track"] });
+
+    expect(
+      addEventListener.mock.calls.filter(([type]) => type === "click"),
+    ).toHaveLength(2);
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "click",
+      expect.any(Function),
+      true,
+    );
+
+    const clickHandler = addEventListener.mock.calls
+      .filter(([type]) => type === "click")
+      .at(-1)?.[1] as ((event: MouseEvent) => void) | undefined;
+    clickHandler?.({
+      target,
+      timeStamp: 40,
+      composedPath: () => [target],
+    } as unknown as MouseEvent);
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "click",
+        attributes: { "data-track": "again" },
+      }),
+    );
+  });
+
+  it("reports attribute-gated clicks with safe metadata only", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const target = createMarkedElement("BUTTON", {
+      "data-track": "buy",
+      "data-ignored": "secret",
+    });
     const path = [target, { tagName: "BODY" }];
 
     vi.stubGlobal("window", {
@@ -130,12 +200,26 @@ describe("behavior monitoring", () => {
       removeEventListener,
     });
 
-    observeClick(onReport);
+    observeClick({
+      onReport,
+      clickAttributes: ["data-track"],
+    });
 
-    const mouseHandler = addEventListener.mock.calls.find(
-      ([type]) => type === "mousedown",
+    expect(addEventListener).toHaveBeenCalledWith(
+      "click",
+      expect.any(Function),
+      true,
+    );
+    expect(addEventListener).not.toHaveBeenCalledWith(
+      "mousedown",
+      expect.any(Function),
+      true,
+    );
+
+    const clickHandler = addEventListener.mock.calls.find(
+      ([type]) => type === "click",
     )?.[1] as ((event: MouseEvent) => void) | undefined;
-    mouseHandler?.({
+    clickHandler?.({
       target,
       timeStamp: 24,
       composedPath: () => path,
@@ -146,50 +230,158 @@ describe("behavior monitoring", () => {
       subType: "click",
       target: "BUTTON",
       startTime: 24,
-      innerHtml: "<span>Buy</span>",
-      outerHtml: "<button><span>Buy</span></button>",
       width: 120,
       height: 36,
-      eventType: "mousedown",
+      eventType: "click",
+      attributes: { "data-track": "buy" },
       path: ["BUTTON", "BODY"],
     });
-
-    const touchHandler = addEventListener.mock.calls.find(
-      ([type]) => type === "touchstart",
-    )?.[1] as ((event: TouchEvent) => void) | undefined;
-    touchHandler?.({
-      target,
-      timeStamp: 25,
-      composedPath: () => path,
-    } as unknown as TouchEvent);
-
-    expect(onReport).toHaveBeenNthCalledWith(2, {
-      type: "behavior",
-      subType: "click",
-      target: "BUTTON",
-      startTime: 25,
-      innerHtml: "<span>Buy</span>",
-      outerHtml: "<button><span>Buy</span></button>",
-      width: 120,
-      height: 36,
-      eventType: "touchstart",
-      path: ["BUTTON", "BODY"],
-    });
+    expect(onReport.mock.calls[0]?.[0]).not.toHaveProperty("innerHtml");
+    expect(onReport.mock.calls[0]?.[0]).not.toHaveProperty("outerHtml");
+    expect(onReport.mock.calls[0]?.[0]).not.toHaveProperty("data-ignored");
 
     stopObserveClick();
     expect(removeEventListener).toHaveBeenCalledWith(
-      "mousedown",
-      expect.any(Function),
-      true,
-    );
-    expect(removeEventListener).toHaveBeenCalledWith(
-      "touchstart",
+      "click",
       expect.any(Function),
       true,
     );
   });
 
-  it("starts every behavior monitor", () => {
+  it("resolves the nearest marked ancestor and ignores unmarked clicks", () => {
+    const addEventListener = vi.fn();
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const child = createMarkedElement("SPAN", {});
+    const marked = createMarkedElement("DIV", {
+      "data-track": "card",
+      "data-id": "",
+    });
+    const outer = createMarkedElement("SECTION", { "data-track": "page" });
+    const unmarked = createMarkedElement("P", { "data-other": "x" });
+
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener: vi.fn(),
+    });
+
+    observeClick({
+      onReport,
+      clickAttributes: ["data-track", "data-id"],
+    });
+
+    const clickHandler = addEventListener.mock.calls.find(
+      ([type]) => type === "click",
+    )?.[1] as ((event: MouseEvent) => void) | undefined;
+
+    clickHandler?.({
+      target: child,
+      timeStamp: 10,
+      composedPath: () => [child, marked, outer, { tagName: "BODY" }],
+    } as unknown as MouseEvent);
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: "DIV",
+        attributes: { "data-track": "card", "data-id": "" },
+        path: ["SPAN", "DIV", "SECTION", "BODY"],
+      }),
+    );
+
+    onReport.mockClear();
+    clickHandler?.({
+      target: unmarked,
+      timeStamp: 11,
+      composedPath: () => [unmarked, { tagName: "BODY" }],
+    } as unknown as MouseEvent);
+    expect(onReport).not.toHaveBeenCalled();
+  });
+
+  it("copies and normalizes clickAttributes against caller mutation", () => {
+    const addEventListener = vi.fn();
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const attributes = [" data-track ", "data-track", "", "data-id"];
+    const target = createMarkedElement("BUTTON", {
+      "data-track": "a",
+      "data-id": "1",
+    });
+
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener: vi.fn(),
+    });
+
+    observeClick({ onReport, clickAttributes: attributes });
+    attributes.length = 0;
+
+    const clickHandler = addEventListener.mock.calls.find(
+      ([type]) => type === "click",
+    )?.[1] as ((event: MouseEvent) => void) | undefined;
+    clickHandler?.({
+      target,
+      timeStamp: 1,
+      composedPath: () => [target],
+    } as unknown as MouseEvent);
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: { "data-track": "a", "data-id": "1" },
+      }),
+    );
+  });
+
+  it("updates the click allowlist and callback without duplicate listeners", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const firstReport = vi.fn<(data: BehaviorReportData) => void>();
+    const latestReport = vi.fn<(data: BehaviorReportData) => void>();
+    const target = createMarkedElement("BUTTON", {
+      "data-track": "buy",
+      "data-new": "v2",
+    });
+
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener,
+    });
+
+    observeClick({
+      onReport: firstReport,
+      clickAttributes: ["data-track"],
+    });
+    observeClick({
+      onReport: latestReport,
+      clickAttributes: ["data-new"],
+    });
+
+    expect(
+      addEventListener.mock.calls.filter(([type]) => type === "click"),
+    ).toHaveLength(1);
+
+    const clickHandler = addEventListener.mock.calls.find(
+      ([type]) => type === "click",
+    )?.[1] as ((event: MouseEvent) => void) | undefined;
+    clickHandler?.({
+      target,
+      timeStamp: 3,
+      composedPath: () => [target],
+    } as unknown as MouseEvent);
+
+    expect(firstReport).not.toHaveBeenCalled();
+    expect(latestReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: { "data-new": "v2" },
+      }),
+    );
+
+    observeClick({ onReport: latestReport, clickAttributes: [] });
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "click",
+      expect.any(Function),
+      true,
+    );
+  });
+
+  it("starts page and navigation monitors without clickAttributes", () => {
     const addEventListener = vi.fn();
     const onReport = vi.fn<(data: BehaviorReportData) => void>();
 
@@ -206,13 +398,8 @@ describe("behavior monitoring", () => {
       onReport,
     });
 
-    expect(addEventListener).toHaveBeenCalledWith(
-      "mousedown",
-      expect.any(Function),
-      true,
-    );
-    expect(addEventListener).toHaveBeenCalledWith(
-      "touchstart",
+    expect(addEventListener).not.toHaveBeenCalledWith(
+      "click",
       expect.any(Function),
       true,
     );
@@ -231,6 +418,42 @@ describe("behavior monitoring", () => {
         type: "behavior",
         subType: "pv",
         uuid: "selected-pv",
+      }),
+    );
+  });
+
+  it("starts click monitoring from observeBehavior when clickAttributes are set", () => {
+    const addEventListener = vi.fn();
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const target = createMarkedElement("A", { "data-track": "nav" });
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/" },
+      addEventListener,
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 30 });
+    vi.stubGlobal("crypto", { randomUUID: () => "selected-pv" });
+
+    observeBehavior({
+      onReport,
+      clickAttributes: ["data-track"],
+    });
+
+    const clickHandler = addEventListener.mock.calls.find(
+      ([type]) => type === "click",
+    )?.[1] as ((event: MouseEvent) => void) | undefined;
+    clickHandler?.({
+      target,
+      timeStamp: 9,
+      composedPath: () => [target],
+    } as unknown as MouseEvent);
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "click",
+        attributes: { "data-track": "nav" },
       }),
     );
   });
@@ -419,4 +642,27 @@ function pageViewUrls(
     }
   }
   return urls;
+}
+
+function createMarkedElement(
+  tagName: string,
+  attributes: Record<string, string>,
+  dimensions: { offsetWidth: number; offsetHeight: number } = {
+    offsetWidth: 120,
+    offsetHeight: 36,
+  },
+) {
+  return {
+    tagName,
+    offsetWidth: dimensions.offsetWidth,
+    offsetHeight: dimensions.offsetHeight,
+    hasAttribute(name: string) {
+      return Object.prototype.hasOwnProperty.call(attributes, name);
+    },
+    getAttribute(name: string) {
+      return Object.prototype.hasOwnProperty.call(attributes, name)
+        ? attributes[name]
+        : null;
+    },
+  };
 }
