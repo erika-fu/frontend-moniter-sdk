@@ -529,6 +529,6 @@ unsubscribe();
 
 ## 13. 隐私
 
-点击报告只包含应用允许的属性值，以及标签名、时间戳、尺寸和可选的节点名称路径，不再包含目标 HTML。这些属性值由应用自己写入，SDK 原样复制，不会脱敏或截断。允许的值不得包含密钥、个人数据、用户输入或无边界的标识；应使用稳定的动作名，例如 `clstag="checkout-submit"`。
+点击报告包含 `type`、`subType`、应用允许的属性值、标签名、事件时间戳、`eventType: "click"`、布局宽高，以及可选的节点名称路径，不再包含目标 HTML。这些属性值由应用自己写入，SDK 原样复制，不会脱敏或截断。允许的值不得包含密钥、个人数据、用户输入或无边界的标识；应使用稳定的动作名，例如 `clstag="checkout-submit"`。
 
 PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。
