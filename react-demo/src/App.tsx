@@ -261,7 +261,7 @@ function TestControls(): ReactNode {
                     <h2 id="test-title">事件触发器</h2>
                 </div>
                 <span className="section-note">
-                    点击会生成行为报告；Hash / History 切换会自动记 PV
+                    本示例只演示页面访问和导航，点击不会产生行为上报。Hash / History 切换会自动记 PV
                 </span>
             </div>
             <div className="action-grid">

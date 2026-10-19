@@ -1,5 +1,15 @@
 # 点击后错误不上报及页面卡顿解决方案
 
+## 当前约束
+
+点击采集现在是捕获阶段的浏览器 `click`，并且只有配置了 `clickAttributes` 才会上报。报告字段见 [Behavior 用户行为监控](../behavior.md)。当前点击报告不包含 `innerHtml` 或 `outerHtml`。
+
+下面记录的是一次历史故障：点击路径上的浏览器对象被放进上报队列，序列化失败后阻塞了后续错误报告。这条约束仍然有效：
+
+> 进入 `dispatchReport` 和上报队列之前，必须把 `Window`、`Document`、DOM 节点和其他宿主对象转换成可序列化的领域数据。
+
+`getSerializableEventPath()` 负责把传播路径变成节点名称字符串。不要把转换推迟到 `JSON.stringify`。
+
 ## 问题现象
 
 Vue demo 启动行为监控和错误监控后，真实点击“Vue 异常”等按钮会出现以下现象：
@@ -17,7 +27,9 @@ Vue demo 启动行为监控和错误监控后，真实点击“Vue 异常”等�
 
 ### 1. 点击报告保存了原始 DOM 对象
 
-行为监控使用捕获阶段监听 `mousedown` 和 `touchstart`：
+当时的行为监控在捕获阶段监听 `mousedown` 和 `touchstart`。当前版本改为捕获阶段的 `click`，并按属性允许列表过滤；历史故障本身来自路径上的宿主对象，不取决于事件名。
+
+历史监听方式：
 
 ```ts
 window.addEventListener("mousedown", mouseDownHandler, true);
@@ -160,7 +172,7 @@ export function getSerializableEventPath(
 }
 ```
 
-点击采集改为保存节点名称：
+点击采集在调用 `dispatchReport` 之前保存节点名称。当前报告只包含允许的属性和可序列化元数据，不包含 `innerHtml` 或 `outerHtml`：
 
 ```ts
 const path = getSerializableEventPath(event);
@@ -171,11 +183,10 @@ dispatchReport(
         subType: "click",
         target: target.tagName,
         startTime: event.timeStamp,
-        innerHtml: target.innerHTML ?? "",
-        outerHtml: target.outerHTML ?? "",
         width: target.offsetWidth ?? 0,
         height: target.offsetHeight ?? 0,
-        eventType,
+        eventType: "click",
+        attributes,
         ...(path ? { path } : {}),
     },
     reportHandler,
@@ -221,13 +232,13 @@ paths?: string[];
 
 ## 回归测试
 
-回归测试构造一个带循环引用的点击传播路径：
+回归测试构造一个带循环引用的点击传播路径，并在进入队列前断言路径已被转换成字符串。当前监听器是 `click`：
 
 ```ts
 const windowTarget: { self?: unknown } = {};
 windowTarget.self = windowTarget;
 
-eventHandlers.get("mousedown")?.({
+eventHandlers.get("click")?.({
     target,
     timeStamp: 24,
     composedPath: () => [target, windowTarget],
@@ -258,7 +269,9 @@ expect(reports).toEqual([
 
 ## 浏览器验证结果
 
-修复后使用真实事件顺序验证：
+下面是修复路径序列化时的验证记录。当前点击监听器只注册捕获阶段的 `click`，不再监听 `mousedown`。
+
+当时使用的真实事件顺序：
 
 ```text
 mousedown -> click -> Vue errorHandler

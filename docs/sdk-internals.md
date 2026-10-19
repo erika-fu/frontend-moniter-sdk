@@ -69,7 +69,9 @@
 
 ## 7. 事件路径
 
-`getSerializableEventPath` 优先 `event.composedPath()`，旧环境回退 `event.path`，将 Window、Document、tagName、nodeName 或构造器名称转换为 `string[]`。不保存 DOM 对象是为了避免循环引用和不可序列化。
+浏览器宿主对象必须在进入上报队列之前转换成可序列化的领域数据。`dispatchReport` 收到的报告里不能带 DOM、`Window`、`Document` 或 `Event`；这些对象一旦进入 `lazyReportBatch` 的缓存，`JSON.stringify` 会因循环引用失败，失败批次会留下来并阻塞后续报告。
+
+`getSerializableEventPath` 在创建点击或资源错误报告时完成转换：优先 `event.composedPath()`，旧环境回退 `event.path`，将 Window、Document、tagName、nodeName 或构造器名称转换为 `string[]`。点击报告因此只携带允许的属性值、标签名、时间戳、尺寸和可选的节点名称路径。详见 [点击后错误不上报及页面卡顿解决方案](solutions/click-event-path-reporting.md)。
 
 ## 8. 行为模块中的 History 包装
 

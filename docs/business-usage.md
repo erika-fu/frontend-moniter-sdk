@@ -31,10 +31,14 @@ const unsubscribe = monitor.subscribe((data) => {
 });
 
 monitor.performance();
-monitor.behavior();
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
 monitor.error();
 monitor.replay();
 ```
+
+`clickAttributes` 列出允许上报的 DOM 属性名，`clstag` 是示例。省略 `clickAttributes` 或传入空列表时，只关闭点击上报；页面访问和地址变化仍会启动。属性值由应用写入，不得包含密钥、个人数据、用户输入或无边界的标识。字段、最近祖先解析和迁移说明见 [Behavior 用户行为监控](behavior.md)。
 
 错误报告建议在每次构建时配置稳定的 `release`：
 
@@ -81,7 +85,7 @@ observeFetch((data) => {
 
 ```ts
 monitor.performance(); // 启动全部性能观察器
-monitor.behavior();    // 启动全部行为观察器
+monitor.behavior({ clickAttributes: ["clstag"] }); // PV、地址变化，以及允许属性上的点击
 monitor.error();       // 启动浏览器错误观察器
 monitor.replay();      // 启动 rrweb 录屏，错误发生后上报相关片段
 ```
@@ -175,8 +179,11 @@ const unsubscribe = monitor.subscribe((data) => {
 });
 
 // 启动浏览器层面的性能、行为和运行时错误采集。
+// 省略 clickAttributes 时只关闭点击上报，PV 与地址变化仍会采集。
 monitor.performance();
-monitor.behavior();
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
 monitor.error();
 
 // Vue.use 会调用 monitor.install(Vue)，安装 Vue.config.errorHandler 包装器。
@@ -216,7 +223,7 @@ Vue 2 的职责划分：
 - `Vue.use(monitor)`：捕获 render、生命周期、事件处理器等进入 `Vue.config.errorHandler` 的框架错误；
 - `monitor.error()`：捕获资源错误、未捕获 JavaScript 错误和未处理 Promise rejection；
 - `monitor.performance()`：采集页面指标与 Fetch/XHR；
-- `monitor.behavior()`：采集当前页 PV，并在 History/Hash 地址变化时继续记 PV；同时采集点击和原生 hash/history 变化。
+- `monitor.behavior({ clickAttributes: ["clstag"] })`：采集当前页 PV，并在 History/Hash 地址变化时继续记 PV；只上报带允许属性的点击，同时采集原生 hash/history 变化。省略 `clickAttributes` 时只关闭点击上报。
 
 ## 9. Vue 3 接入
 
@@ -238,7 +245,9 @@ monitor.init({
 });
 
 monitor.performance();
-monitor.behavior();
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
 monitor.error();
 
 const app = createApp(App);
@@ -299,8 +308,11 @@ monitor.init({
 });
 
 // 这些函数只需要在应用入口调用一次，不要放进 React 组件 render。
+// 省略 clickAttributes 时只关闭点击上报，PV 与地址变化仍会采集。
 monitor.performance();
-monitor.behavior();
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
 monitor.error();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -365,6 +377,8 @@ Error Boundary 只能捕获 React 支持的组件树错误，不能捕获事件�
 ## 11. SPA 页面访问（PV）与路由接入
 
 ### 11.1 默认行为
+
+本节示例只演示页面访问和导航。下面的 `monitor.behavior()` 不传 `clickAttributes`，因此不会上报点击；需要点击时另传允许的属性名，例如 `clickAttributes: ["clstag"]`。省略或传空列表只关闭点击上报。
 
 `monitor.behavior()` 会立即记录当前页 PV，并默认开启 `autoPageView`，继续监听：
 
@@ -470,7 +484,7 @@ url.searchParams.set("route", "orders");
 window.history.pushState({ route: "orders" }, "", url);
 ```
 
-仓库内 Vue demo 与 React demo 就是这种用法：默认 `behavior()`，再用 Hash / `pushState` 按钮验证自动 PV。详见 [demo/src/scenarios.ts](../demo/src/scenarios.ts) 与 [react-demo/src/App.tsx](../react-demo/src/App.tsx)。
+Vue demo 用 `clickAttributes: ["clstag"]` 显式开启点击，再用 Hash / `pushState` 按钮验证自动 PV，见 [demo/src/startMonitoring.ts](../demo/src/startMonitoring.ts)。React demo 调用 `behavior()` 时不传 `clickAttributes`，只演示页面访问和导航，见 [react-demo/src/main.tsx](../react-demo/src/main.tsx)。
 
 ### 11.6 消费与排查
 
@@ -515,4 +529,6 @@ unsubscribe();
 
 ## 13. 隐私
 
-click 含目标 HTML，PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。
+点击报告只包含应用允许的属性值，以及标签名、时间戳、尺寸和可选的节点名称路径，不再包含目标 HTML。这些属性值由应用自己写入，SDK 原样复制，不会脱敏或截断。允许的值不得包含密钥、个人数据、用户输入或无边界的标识；应使用稳定的动作名，例如 `clstag="checkout-submit"`。
+
+PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。

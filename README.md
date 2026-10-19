@@ -109,10 +109,17 @@ frontendMonitor.init({
 });
 
 frontendMonitor.performance();
-frontendMonitor.behavior();
+frontendMonitor.behavior({
+  clickAttributes: ["clstag"],
+});
 frontendMonitor.error();
 frontendMonitor.replay();
 ```
+
+`clickAttributes` is the allowlist of DOM attribute names that opt an element
+into click reporting. `clstag` above is an example name. Omitting
+`clickAttributes`, or passing an empty list, disables click reporting only.
+Page-view and navigation monitoring still start.
 
 The SDK batches reports, prefers `navigator.sendBeacon`, and falls back to an
 unmonitored `XMLHttpRequest`. Set `isImageUpload: true` to send the encoded
@@ -188,7 +195,7 @@ Then visit `http://localhost:4173/`.
 
 - [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA PV 接入
 - [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
-- [Behavior 用户行为监控](docs/behavior.md)：自动 PV、去重、点击/触摸、hash/history 和 ID
+- [Behavior 用户行为监控](docs/behavior.md)：自动 PV、去重、属性门控点击、hash/history 和 ID
 - [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
 - [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位
 - [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输、History 包装和事件路径

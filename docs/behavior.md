@@ -1,8 +1,8 @@
 # Behavior 用户行为监控
 
-本文对应 `src/behavior/`。行为模块采集页面访问（PV）、鼠标/触摸交互和地址变化事件，整理后交给统一分发器；它不依赖 Vue Router / React Router，也不负责独立的服务端协议。
+本文对应 `src/behavior/`。行为模块采集页面访问（PV）、显式标记的点击和地址变化事件，整理后交给统一分发器；它不依赖 Vue Router / React Router，也不负责独立的服务端协议。
 
-它实际监听的是 `mousedown` 与 `touchstart`，不是浏览器的 `click` 事件。PV 默认会在 URL 变化时自动上报；地址变化原始信号（`hashchange` / `popstate`）与 PV 是两套数据，不要混用。
+点击上报默认关闭。配置 `clickAttributes` 后，SDK 在捕获阶段监听浏览器 `click`，只上报最近的已标记祖先。省略 `clickAttributes` 或传入空列表时，只关闭点击上报，页面访问和地址变化仍会采集。PV 默认会在 URL 变化时自动上报；地址变化原始信号（`hashchange` / `popstate`）与 PV 是两套数据，不要混用。
 
 ## 1. 启动入口和生命周期
 
@@ -12,8 +12,12 @@
 import monitor from "frontend-moniter-sdk";
 
 monitor.init({ url: "/monitor", appId: "web" });
-monitor.behavior();
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
 ```
+
+`clstag` 是允许上报的属性名示例。不传 `clickAttributes`，或传入 `[]` 以及规范化后没有有效名称的列表时，不会安装点击监听器，也不会发出点击报告；PV 与地址变化不受影响。
 
 命名导出适合本地旁路或单独启停：
 
@@ -31,6 +35,7 @@ import {
 } from "frontend-moniter-sdk";
 
 observeBehavior({
+  clickAttributes: ["clstag"],
   onReport(data) {
     console.log(data.type, data.subType);
   },
@@ -46,10 +51,11 @@ stopObserveBehavior();
 | `options` | `BehaviorMonitoringOptions` | `{}` | 本次启动的配置 |
 | `options.onReport` | `(data: BehaviorReportData) => void` | 无 | 额外接收 pv、click、hashchange、popstate；不替代统一上报 |
 | `options.autoPageView` | `boolean` | `true` | 为 `true` 时在 URL 变化后自动上报 PV；为 `false` 时只保留启动时的一次 PV |
+| `options.clickAttributes` | `string[]` | 无 | 允许上报的 DOM 属性名。省略或规范化后为空时只关闭点击上报，不影响 PV 与地址变化 |
 
 启动顺序：
 
-1. `observeClick`
+1. `observeClick`（`clickAttributes` 规范化后为空时不安装监听器）
 2. `observePageChange`
 3. `observeAutoPageView`（仅当 `autoPageView !== false`）
 4. `observePV`（立即采集当前页）
@@ -75,7 +81,7 @@ stopObserveBehavior();
 | `pv.ts` | 唯一 PV 出口；连续相同 `pageUrl` 去重 | `pv` |
 | `autoPageView.ts` | 监听 Hash / History，并包装 History API，调用 `observePV` | 无独立 `subType`，最终仍是 `pv` |
 | `pageChange.ts` | 记录原生 `hashchange` / `popstate` 的 from/to | `hashchange`、`popstate` |
-| `click.ts` | 捕获阶段采集鼠标/触摸 | `click` |
+| `click.ts` | 捕获阶段监听 `click`，解析最近的已标记祖先 | `click` |
 
 数据流：
 
@@ -228,35 +234,79 @@ monitor.behavior({ autoPageView: false });
 
 整体上，它通过“监听浏览器事件 + 包装 History API”覆盖 SPA 导航，同时利用状态缓存、透明调用和条件恢复，保证监听可复用、可清理且不干扰业务及其他工具。
 
-## 5. 点击/触摸交互
+## 5. 属性门控的点击上报
 
-入口：`observeClick(onReport?)`。在捕获阶段注册 `mousedown` 和 `touchstart`，以便在业务调用 `stopPropagation()` 前完成采集。
+入口是 `observeClick(options?)`，通常由 `observeBehavior({ clickAttributes })` 代为启动。点击不是默认采集项。
 
-每次事件：
+```ts
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
+```
 
-1. 检查目标是否有 `tagName`；没有则忽略。
-2. 读取标签名、`innerHTML`、`outerHTML`、`offsetWidth`、`offsetHeight` 和 `event.timeStamp`。
-3. 用 `getSerializableEventPath()` 把 `composedPath()`（旧环境回退 `event.path`）转成节点名称字符串数组。
-4. 分发报告。
+```html
+<button type="button" clstag="checkout-submit">提交订单</button>
+```
+
+省略 `clickAttributes`、传入空数组，或列表里只剩空白和非字符串时，SDK 不安装点击监听器，也不上报点击。这只关闭点击。`observeBehavior` 仍会采集当前页 PV，并继续监听地址变化。
+
+`clickAttributes` 会被复制、去掉首尾空白并去重。调用方事后修改原数组，不会改变已经生效的允许列表。对同一个 `window` 重复启动只更新回调和允许列表，不重复安装监听器；允许列表变为空时会移除已有监听器。`stopObserveClick()` 移除监听器，并清空回调与允许列表。没有 `window` 时直接返回，不抛错。
+
+### 5.1 捕获阶段的 `click`
+
+监听器是 `window.addEventListener("click", handler, true)`。采集发生在捕获阶段，因此目标在冒泡阶段调用 `stopPropagation()` 挡不住这次采集。SDK 不调用 `preventDefault()`，也不改变点击的默认行为。
+
+上报的是浏览器 `click`，不是 `mousedown` 或 `touchstart`。一次完成的指针或键盘激活通常只产生一条 `click`。按下后没有形成 `click` 的指针移动，以及单独的 `touchstart`，都不会上报。
+
+### 5.2 最近的已标记祖先
+
+处理 `click` 时，SDK 沿 `event.composedPath()` 从事件目标向外查找；旧环境没有 `composedPath` 时回退 `event.path`。路径上第一个带有任一允许属性的元素就是上报目标。点击标记元素内部的子节点时，上报的是该标记祖先，不是子节点本身。
+
+路径上有多层标记时，只采用最近的一层，不会把外层标记合并进来。路径上没有任何允许属性时，这次交互被忽略，不产生报告。允许列表之外的属性不会进入报告。
+
+显式空值仍然是有效标记。`<button clstag="">` 会被命中，对应字段是空字符串。元素上根本没有该属性时，则不是标记。
+
+同一元素上的多个允许属性会全部写入 `attributes`。例如允许 `clstag` 和 `data-id`，元素同时带有这两个属性时，报告包含两者；只带其中一个时，只包含存在的那个。
+
+### 5.3 报告字段
 
 ```ts
 interface ClickReportData {
   type: "behavior";
   subType: "click";
-  target: string;      // 如 BUTTON
-  startTime: number;   // event.timeStamp
-  innerHtml: string;
-  outerHtml: string;
-  width: number;       // CSS 像素
-  height: number;      // CSS 像素
-  eventType: "mousedown" | "touchstart";
-  path?: string[];
+  target: string; // 命中元素的标签名，如 BUTTON
+  startTime: number; // event.timeStamp
+  width: number; // CSS 像素，缺失时为 0
+  height: number;
+  eventType: "click";
+  attributes: Record<string, string>; // 仅命中元素上的允许属性
+  path?: string[]; // 节点名称；环境不支持时省略
 }
 ```
 
-`path` 只保存节点名称，不保存 DOM 引用，避免循环引用导致批量上报序列化失败。详见 [点击后错误不上报及页面卡顿解决方案](solutions/click-event-path-reporting.md)。
+`path` 只保存节点名称。`getSerializableEventPath()` 在调用 `dispatchReport` 之前，把 `Window`、`Document` 和 DOM 节点转换成字符串，浏览器对象不会进入上报队列。详见 [点击后错误不上报及页面卡顿解决方案](solutions/click-event-path-reporting.md)。
 
-`innerHtml`、`outerHtml` 可能含用户输入，业务上传前应评估隐私和体积风险；SDK 当前不会脱敏或截断。重复启动只更新最新回调，`stopObserveClick()` 移除两个监听器。
+报告包含命中的允许属性和可序列化的交互元数据：标签名、事件时间戳、事件类型、布局宽高，以及可选的节点名称路径。报告不包含 `innerHtml`、`outerHtml`、DOM 节点，也不包含未允许的属性。
+
+### 5.4 从自动 `mousedown` / `touchstart` 迁移
+
+旧版本在捕获阶段自动监听每一次 `mousedown` 和 `touchstart`，不需要标记。当前版本改为显式开启：
+
+| | 旧行为 | 当前行为 |
+| --- | --- | --- |
+| 触发事件 | `mousedown`、`touchstart` | 捕获阶段的浏览器 `click` |
+| 哪些交互上报 | 页面上每一次指针按下 | 仅当最近祖先带有允许属性 |
+| 未配置时 | 仍然采集点击 | 不安装监听器；PV 与地址变化继续采集 |
+| 目标元素 | 事件目标本身 | 路径上最近的已标记祖先 |
+| `eventType` | `"mousedown"` \| `"touchstart"` | `"click"` |
+| 元素内容 | `innerHtml`、`outerHtml` | 不再提供这两个字段 |
+| 业务标记 | 无 | `attributes`，只含允许的属性名和值 |
+
+接入时配置 `clickAttributes`（例如 `["clstag"]`），给要统计的控件写上稳定的属性值，并停止依赖 `innerHtml`、`outerHtml` 或 `mousedown` 时间点。未标记的点击现在会被忽略。
+
+### 5.5 属性值与隐私
+
+允许的属性值由应用自己写入。SDK 原样复制，不会脱敏或截断。这些值不得包含密钥、个人数据、用户输入或无边界的标识，例如会话令牌、邮箱、自由文本，以及可以关联到个人的无上限 ID。适合放进 `clstag` 的是稳定的动作名，例如 `checkout-submit`，而不是按钮当前显示的文案，或用户填入的内容。
 
 ## 6. 地址变化：`observePageChange`
 
@@ -289,17 +339,16 @@ interface PageChangeReportData {
 
 ## 8. Demo 中的用法
 
-Vue demo（`demo/`）与 React demo（`react-demo/`）都使用默认自动 PV：
+Vue demo（`demo/`）显式开启点击上报，允许的属性名是 `clstag`：
 
 ```ts
-frontendMonitor.behavior();
+frontendMonitor.behavior({
+  clickAttributes: ["clstag"],
+});
 ```
 
-Vue demo 的行为区提供：
+`demo/src/startMonitoring.ts` 使用这份配置。行为区里需要上报的控件带有稳定的 `clstag` 值，描述的是动作而不是用户数据。页面上保留未标记对照：它仍然可以点击，但不会产生点击报告。Hash 切换走 `hashchange`，History 切换内部调用 `history.pushState`，两者都会自动记 PV。
 
-- Hash 切换：`switchRoute('#/scenario/orders')` 等，走 `hashchange`；
-- History 切换：`pushHistoryRoute('orders')`，内部调用 `history.pushState` 改 query。
-
-React demo 的侧边栏 Hash 导航（`#/console`、`#/reports`、`#/coverage`）以及事件触发器里的 History 按钮，都会自动产生 PV；实时报告流可直接看到 `subType: "pv"`。
+React demo（`react-demo/`）调用 `frontendMonitor.behavior()` 时不传 `clickAttributes`。它只演示页面访问和导航，不产生点击报告。侧边栏 Hash 导航（`#/console`、`#/reports`、`#/coverage`）以及事件触发器里的 History 按钮，都会自动产生 `subType: "pv"`。
 
 更偏设计决策与接入选型的说明见 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)；业务路由钩子示例见 [业务侧使用说明](business-usage.md) §11。
