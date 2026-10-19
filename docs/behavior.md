@@ -216,6 +216,18 @@ monitor.behavior({ autoPageView: false });
 
 `stopObserveAutoPageView()` 移除 `hashchange` / `popstate` 监听，并还原 History 方法。
 
+### 4.5 设计考虑与实现亮点
+
+1. **完整覆盖 SPA 路由变化**：监听 `hashchange`、`popstate`，同时包装 `history.pushState()` 和 `history.replaceState()`，弥补后两者不会触发 `popstate` 的问题。
+2. **不改变 History 原方法的行为**：通过 `Reflect.apply(original, this, args)` 保留原始 `this` 和参数；先执行原方法，成功后才上报，并将执行结果原样返回。
+3. **避免重复初始化**：使用 `observedWindow` 判断是否已监听同一个 `window`。重复调用时仅通过 `reportHandler = onReport` 更新最新回调，不重复注册事件或包装 History。
+4. **安全恢复 History 方法**：同时保存原始函数和本模块安装的包装函数。若其他工具后来再次包装该方法，SDK 停止时不会强行覆盖它；各工具应按与安装相反的顺序停止（后安装、先卸载），才能逐层恢复原方法。
+5. **完整清理资源**：保存事件处理函数引用，以便准确调用 `removeEventListener()`；停止后清空所有模块状态，支持安全地重复停止和重新启动。
+6. **兼容 SSR 和非浏览器环境**：初始化前检查 `window`、`performance` 和 `addEventListener`，缺少浏览器能力时直接返回，避免运行时报错。
+7. **职责分离并避免重复 PV**：本模块只负责感知 URL 变化，再统一调用 `observePV()`；具体的数据生成、分发及相同 URL 去重由 `pv.ts` 负责。
+
+整体上，它通过“监听浏览器事件 + 包装 History API”覆盖 SPA 导航，同时利用状态缓存、透明调用和条件恢复，保证监听可复用、可清理且不干扰业务及其他工具。
+
 ## 5. 点击/触摸交互
 
 入口：`observeClick(onReport?)`。在捕获阶段注册 `mousedown` 和 `touchstart`，以便在业务调用 `stopPropagation()` 前完成采集。

@@ -1,5 +1,7 @@
 import { observePV, type PageViewReportHandler } from "./pv.js";
 
+// 保存本轮监听所使用的浏览器对象、事件处理器和 History 方法，
+// 以便重复初始化时复用监听，并在停止监听时完整恢复现场。
 let observedWindow: Window | undefined;
 let reportHandler: PageViewReportHandler | undefined;
 let hashChangeHandler: (() => void) | undefined;
@@ -10,10 +12,12 @@ let originalReplaceState: History["replaceState"] | undefined;
 let wrappedPushState: History["pushState"] | undefined;
 let wrappedReplaceState: History["replaceState"] | undefined;
 
+/** 使用最新注册的回调上报当前页面的 PV。 */
 function reportCurrentPageView(): void {
     observePV(reportHandler);
 }
 
+/** 包装指定的 History 方法，在路由更新成功后触发一次 PV 上报。 */
 function patchHistoryMethod(method: "pushState" | "replaceState"): void {
     const historyApi = patchedHistory;
     if (!historyApi) {
@@ -41,6 +45,7 @@ function patchHistoryMethod(method: "pushState" | "replaceState"): void {
     historyApi[method] = wrapped;
 }
 
+/** 仅当方法仍是本模块安装的包装函数时，才恢复原始实现。 */
 function restoreHistoryMethod(
     method: "pushState" | "replaceState",
     original: History["pushState"] | undefined,
