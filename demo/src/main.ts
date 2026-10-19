@@ -1,26 +1,17 @@
 import { createApp } from "vue";
 import frontendMonitor from "frontend-moniter-sdk";
 import App from "./App.vue";
+import { startDemoMonitoring } from "./startMonitoring";
 import "./style.css";
 
-const reportUrl =
-    import.meta.env.VITE_MONITOR_URL ??
-    "http://localhost:9800/api/v1/reportData";
-
-frontendMonitor.init({
-    url: reportUrl,
-    projectName:
-        import.meta.env.VITE_MONITOR_PROJECT ??
-        "frontend-moniter-sdk-demo",
-    appId: import.meta.env.VITE_MONITOR_APP_ID ?? "vue-demo",
-    userId: import.meta.env.VITE_MONITOR_USER_ID ?? "local-developer",
-    release: import.meta.env.VITE_MONITOR_RELEASE ?? "demo@0.1.0",
-    batchSize: 1,
-});
-
-frontendMonitor.performance();
 // 默认开启 autoPageView：Hash / History 地址变化会自动记 PV。
-frontendMonitor.behavior();
-frontendMonitor.error();
+// 行为点击只上报带 clstag 的控件。
+startDemoMonitoring(frontendMonitor, {
+    url: import.meta.env.VITE_MONITOR_URL,
+    projectName: import.meta.env.VITE_MONITOR_PROJECT,
+    appId: import.meta.env.VITE_MONITOR_APP_ID,
+    userId: import.meta.env.VITE_MONITOR_USER_ID,
+    release: import.meta.env.VITE_MONITOR_RELEASE,
+});
 
 createApp(App).use(frontendMonitor).mount("#app");

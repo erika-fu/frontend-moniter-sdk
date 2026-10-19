@@ -16,6 +16,7 @@ import {
 } from "./scenarios";
 
 const showVueError = ref(false);
+const unmarkedComparisonMessage = ref("");
 const monitorUrl =
     import.meta.env.VITE_MONITOR_URL ??
     "http://localhost:9800/api/v1/reportData";
@@ -36,6 +37,10 @@ onMounted(startReplayRecording);
 
 function triggerVueError(): void {
     showVueError.value = true;
+}
+
+function acknowledgeUnmarkedClick(): void {
+    unmarkedComparisonMessage.value = "未标记对照已执行";
 }
 </script>
 
@@ -92,36 +97,50 @@ function triggerVueError(): void {
                         <p class="section-kicker">BEHAVIOR</p>
                         <h2 id="behavior-title">页面访问、点击与路由</h2>
                     </div>
-                    <span class="section-note">
-                        点击会自动采集；Hash / History 切换会自动记 PV
-                    </span>
                 </div>
+                <p class="section-note">
+                    只有携带 clstag 标记的控件才会产生行为点击上报。未标记对照可以点击，但不会产生点击上报。Hash / History 切换仍会自动记 PV。
+                </p>
                 <div class="scenario-grid">
                     <button
                         type="button"
+                        clstag="switch-hash-route-to-orders"
                         @click="switchRoute('#/scenario/orders')"
                     >
                         Hash 切到订单
                     </button>
                     <button
                         type="button"
+                        clstag="switch-hash-route-to-profile"
                         @click="switchRoute('#/scenario/profile')"
                     >
                         Hash 切到个人
                     </button>
                     <button
                         type="button"
+                        clstag="switch-history-route-to-orders"
                         @click="pushHistoryRoute('orders')"
                     >
                         History 切到订单
                     </button>
                     <button
                         type="button"
+                        clstag="switch-history-route-to-profile"
                         @click="pushHistoryRoute('profile')"
                     >
                         History 切到个人
                     </button>
+                    <button type="button" @click="acknowledgeUnmarkedClick">
+                        未标记对照
+                    </button>
                 </div>
+                <p
+                    v-if="unmarkedComparisonMessage"
+                    class="section-note"
+                    role="status"
+                >
+                    {{ unmarkedComparisonMessage }}
+                </p>
             </section>
 
             <section class="scenario-section" aria-labelledby="network-title">
