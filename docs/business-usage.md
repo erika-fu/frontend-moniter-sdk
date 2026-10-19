@@ -107,15 +107,27 @@ unsubscribe();
 
 ```ts
 interface ReportEnvelope<T = unknown> {
+  protocolVersion: 1;
   id: string;
   projectName: string;
   appId: string;
+  sessionId: string;
+  timestamp: number;
+  release: string;
   userId: string;
+  user: { id: string };
+  environment: {
+    url: string;
+    userAgent: string;
+    language: string;
+  };
   data: T;
 }
 ```
 
-`id` 由 SDK 生成。直接调用 `report(data)` 时 `data` 是单条；批处理 flush 时 `data` 是缓存数组，因此服务端应兼容两种形态。面向仓库内 server 时，推荐将 `url` 配置为 `/api/v1/reportData`；旧的 `/reportData` 仅作为兼容入口。版本化 envelope 使用 `protocolVersion: 1` 时还需要 `sessionId`、有限数值的 `timestamp`、`release`、`user.id` 和完整 `environment` 字段。各数据字段见 `performance.md`、`behavior.md`、`error.md` 和 `replay.md`，服务端协议与响应见 [Server 服务端文档](server.md)。
+`id` 由 SDK 生成。普通观察器经批处理 flush 时，`data` 是缓存数组。直接调用 `report(data)` 会原样把参数放入 envelope；仓库内 server 要求 `data` 为数组，因此直接面向该 server 调用时也应传入数组。推荐将 `url` 配置为 `/api/v1/reportData`，旧的 `/reportData` 仅作为兼容入口。
+
+`timestamp` 和 `environment.url` 在 flush、组装 envelope 时读取，不一定等于每条事件的采集时间和采集页面。各数据字段见 `performance.md`、`behavior.md`、`error.md` 和 `replay.md`，服务端协议与响应见 [Server 服务端文档](server.md)。
 
 ## 6. 发送顺序和失败处理
 
@@ -126,10 +138,10 @@ interface ReportEnvelope<T = unknown> {
 ```ts
 import { flushReportQueue } from "frontend-moniter-sdk";
 
-flushReportQueue(); // boolean：发送成功 true，无缓存或失败 false
+flushReportQueue(); // boolean：传输已接受/安排为 true；无缓存或同步失败为 false
 ```
 
-只有传输函数接受成功才清空缓存；失败时保留，避免静默丢数。图片 GET 会把 JSON 放进 URL，不适合大报告或敏感内容。
+只有传输函数返回已接受或已安排时才清空缓存；失败时保留，避免同步失败时静默丢数。这里不是服务端确认：XHR 返回 true 只表示异步发送任务已安排，Image 返回 true 只表示已经设置 `src`。图片 GET 会把 JSON 放进 URL，不适合大报告或敏感内容。
 
 `clearReportQueue` 目前是 SDK 内部能力，没有从包根公开。业务侧不应直接丢弃缓存。
 
@@ -398,35 +410,23 @@ History 模式和 Hash 模式的路由跳转都会自动产生 `subType: "pv"`�
 - 页面组件是否已渲染；
 - 路由模板名（例如 `/users/:id`）与实际地址的对应关系。
 
-模块字段、去重规则和 History 包装细节见 [Behavior 用户行为监控](behavior.md)；设计取舍见 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)。
+模块字段、去重规则、History 包装和设计取舍见 [Behavior 用户行为监控](behavior.md)。
 
 ### 11.2 推荐接入方式
 
 | 场景 | 推荐做法 |
 | --- | --- |
-| 通用 SPA / 快速接入 | `monitor.behavior()`，依赖默认自动 PV |
-| 能控制路由代码，要“导航成功才算” | 默认自动 PV + 在 `afterEach` / `useLocation` 中调用 `observePV()` |
-| 完全不信任 URL 猜测 | `monitor.behavior({ autoPageView: false })`，只在路由成功钩子里 `observePV()` |
-| 微前端卸载 / 测试清理 | `stopObserveBehavior()`，还原 History 并清除去重 |
+| 通用 SPA，只要求 URL 变化即计 PV | `monitor.behavior()`，使用默认自动 PV |
+| 必须在路由守卫通过、重定向完成后才计后续 PV | `monitor.behavior({ autoPageView: false })`，在成功钩子里调用 `observePV()` |
+| 自动 PV 与已有路由钩子暂时并存 | 两者可共用完整 URL 去重，但钩子通常不会替换先产生的自动 PV，也不赋予它“导航成功”语义 |
+| 连首条 PV 都必须由业务控制 | 不调用聚合 `behavior()`；按需组合 `observeClick()`、`observePageChange()` 和业务侧 `observePV()` |
+| 微前端卸载 / 测试清理 | `stopObserveBehavior()`，还原可恢复的 History 包装并清除 PV 去重 |
 
 ### 11.3 Vue Router
 
-默认自动 PV 已覆盖大多数 History / Hash 跳转。若要在导航确认成功后再补一条精确 PV：
+默认自动 PV 已覆盖常见 History / Hash URL 变化。若项目已有 `afterEach`，可以调用 `observePV()` 与自动模式共用去重，但这通常只是在迁移期避免重复：History 包装可能先记录相同 URL，后到达的钩子会被去重，不能把先前报告变成“导航确认成功”的报告。
 
-```ts
-import { observePV } from "frontend-moniter-sdk";
-import router from "./router";
-
-monitor.behavior();
-
-router.afterEach(() => {
-  observePV();
-});
-```
-
-去重仍然生效：首屏 `behavior()` 与首次 `afterEach` 若落在同一 `pageUrl`，不会记两次。
-
-只想使用路由钩子时：
+要以 Vue Router 成功钩子作为后续 PV 的唯一依据：
 
 ```ts
 monitor.behavior({ autoPageView: false });
@@ -460,15 +460,15 @@ export function RouteMonitor(): null {
 }
 ```
 
-在应用根部渲染 `<RouteMonitor />`，并照常调用 `monitor.behavior()`。Effect 与自动 PV 共用去重。
+在应用根部渲染 `<RouteMonitor />`。如果同时使用默认 `monitor.behavior()`，Effect 与自动 PV 共用去重，但 Effect 不会把已经产生的自动 PV 改成渲染完成语义。
 
-只认路由位置变化时：
+要只以 React Router 的 location effect 记录后续 PV：
 
 ```ts
 monitor.behavior({ autoPageView: false });
 ```
 
-React 18 开发模式下，`StrictMode` 可能重复执行 Effect。相同地址的连续 PV 会被去重，同一次进入不会记两次。生产构建不受该开发检查机制影响。
+聚合入口仍会记录启动时当前页。若首条 PV 也必须由 React 控制，应按需启动细粒度观察器，并只在 `<RouteMonitor />` 中调用 `observePV()`。React 18 开发模式下，`StrictMode` 可能重复执行 Effect；连续相同完整 URL 会被去重。
 
 ### 11.5 无路由框架时的手写导航
 
@@ -531,4 +531,4 @@ unsubscribe();
 
 点击报告包含 `type`、`subType`、应用允许的属性值、标签名、事件时间戳、`eventType: "click"`、布局宽高，以及可选的节点名称路径，不再包含目标 HTML。这些属性值由应用自己写入，SDK 原样复制，不会脱敏或截断。允许的值不得包含密钥、个人数据、用户输入或无边界的标识；应使用稳定的动作名，例如 `clstag="checkout-submit"`。
 
-PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。业务应在采集配置、订阅或服务端完成必要的屏蔽与脱敏；不要把 `userId` 当作 SDK 生成的匿名 ID。
+PV / pageChange 含完整页面 URL（可能带 query 或 hash 中的业务参数），error 可能含 stack，Fetch/XHR 含 URL，replay 含页面 DOM 和交互。当前 Behavior API 没有 URL 转换钩子；并且报告会先克隆进网络队列，再通知 `subscribe()`，所以修改订阅参数不能清洗已排队的副本。应避免把敏感值放进 URL，并在接收服务持久化或消费前完成必要的过滤与脱敏。不要把 `userId` 当作 SDK 生成的匿名 ID。

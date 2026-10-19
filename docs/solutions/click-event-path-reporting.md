@@ -124,9 +124,9 @@ clearCache();
 button.click();
 ```
 
-通常只派发 `click` 事件，不会完整模拟真实指针产生的 `mousedown`。SDK 的点击监控监听的是 `mousedown` 和 `touchstart`，因此脚本调用可能绕过问题数据，只触发 Vue 错误处理器。
+通常只派发 `click` 事件，不会完整模拟真实指针产生的 `mousedown`。发生故障时的旧版 SDK 点击监控监听的是 `mousedown` 和 `touchstart`，因此脚本调用可能绕过问题数据，只触发 Vue 错误处理器。
 
-真实鼠标点击会先产生 `mousedown`，所以会稳定触发该问题。
+在该旧实现中，真实鼠标点击会先产生 `mousedown`，所以会稳定触发该问题。
 
 ## 修复方案
 

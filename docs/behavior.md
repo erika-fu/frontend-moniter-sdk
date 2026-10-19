@@ -1,320 +1,291 @@
 # Behavior 用户行为监控
 
-本文对应 `src/behavior/`。行为模块采集页面访问（PV）、显式标记的点击和地址变化事件，整理后交给统一分发器；它不依赖 Vue Router / React Router，也不负责独立的服务端协议。
+本文是 `src/behavior/` 的权威实现参考，说明页面访问（PV）、自动 PV、原生地址变化和属性门控点击的公开契约、内部调用链、设计理由与边界。
 
-点击上报默认关闭。配置 `clickAttributes` 后，SDK 在捕获阶段监听浏览器 `click`，只上报最近的已标记祖先。省略 `clickAttributes` 或传入空列表时，只关闭点击上报，页面访问和地址变化仍会采集。PV 默认会在 URL 变化时自动上报；地址变化原始信号（`hashchange` / `popstate`）与 PV 是两套数据，不要混用。
+Behavior 只负责采集并把报告交给 SDK 的统一分发器：它不依赖 Vue Router / React Router，不提供行为专用网络协议，也不直接实现 PV 看板、点击聚合或漏斗分析。仓库内 server 将这些数据作为通用事件保存。
 
-## 1. 启动入口和生命周期
+## 1. 数据语义
 
-公共入口 `src/index.ts` 重新导出 `observeBehavior` 及细粒度观察器：
+| `subType` | 含义 | 主要用途 |
+| --- | --- | --- |
+| `pv` | 当前完整 URL 的一次页面访问记录 | 页面访问量、路由访问分析 |
+| `click` | 最近一个显式标记元素上的语义化点击 | 业务动作分析 |
+| `hashchange` | 浏览器原生 Hash 变化信号 | 导航链路诊断 |
+| `popstate` | 浏览器原生历史记录遍历信号 | 前进/后退链路诊断 |
+
+`hashchange` / `popstate` 与 `pv` 是两套数据。同一次 Hash 导航通常同时产生一条原生变化报告和一条 PV，不能把它们一起累计为访问量。
+
+## 2. 公共入口与配置
+
+默认导出对象提供 `behavior`，它与命名导出的 `observeBehavior` 是同一个函数：
 
 ```ts
 import monitor from "frontend-moniter-sdk";
 
-monitor.init({ url: "/monitor", appId: "web" });
+monitor.init({
+  url: "/api/v1/reportData",
+  appId: "web",
+});
+
 monitor.behavior({
   clickAttributes: ["clstag"],
+  onReport(report) {
+    console.log(report.type, report.subType);
+  },
 });
 ```
 
-`clstag` 是允许上报的属性名示例。不传 `clickAttributes`，或传入 `[]` 以及规范化后没有有效名称的列表时，不会安装点击监听器，也不会发出点击报告；PV 与地址变化不受影响。
+`init()` 只更新统一上报配置，不启动任何观察器。应先调用 `init()`，再启动 Behavior，避免首条同步 PV 使用旧配置。
 
-命名导出适合本地旁路或单独启停：
+`BehaviorMonitoringOptions`：
+
+| 参数 | 类型 | 默认值 | 作用 |
+| --- | --- | --- | --- |
+| `onReport` | `(report: BehaviorReportData) => void` | 无 | 额外接收本次观察器产生的 Behavior 报告；不替代网络上报或全局订阅 |
+| `autoPageView` | `boolean` | `true` | 是否把后续 URL 变化自动转换为 PV |
+| `clickAttributes` | `string[]` | 无 | 允许上报的 DOM 属性名；省略或规范化后为空时不采集点击 |
+
+细粒度入口也从包根导出：
 
 ```ts
 import {
-  observeBehavior,
   observeAutoPageView,
   observeClick,
   observePageChange,
   observePV,
-  stopObserveBehavior,
   stopObserveAutoPageView,
+  stopObserveBehavior,
   stopObserveClick,
   stopObservePageChange,
 } from "frontend-moniter-sdk";
-
-observeBehavior({
-  clickAttributes: ["clstag"],
-  onReport(data) {
-    console.log(data.type, data.subType);
-  },
-});
-
-stopObserveBehavior();
 ```
 
-`observeBehavior(options)` 的参数：
+## 3. 模块与状态
 
-| 参数 | 类型 | 默认值 | 作用 |
+| 文件 | 职责 | 主要模块状态 | 产出 |
 | --- | --- | --- | --- |
-| `options` | `BehaviorMonitoringOptions` | `{}` | 本次启动的配置 |
-| `options.onReport` | `(data: BehaviorReportData) => void` | 无 | 额外接收 pv、click、hashchange、popstate；不替代统一上报 |
-| `options.autoPageView` | `boolean` | `true` | 为 `true` 时在 URL 变化后自动上报 PV；为 `false` 时只保留启动时的一次 PV |
-| `options.clickAttributes` | `string[]` | 无 | 允许上报的 DOM 属性名。省略或规范化后为空时只关闭点击上报，不影响 PV 与地址变化 |
+| `src/behavior/index.ts` | 聚合启动、停止和联合类型 | 无 | 转发各模块报告 |
+| `src/behavior/pv.ts` | 构造 PV、连续完整 URL 去重 | `lastReportedPageUrl` | `pv` |
+| `src/behavior/autoPageView.ts` | 把原生导航和 History API 调用适配为 `observePV()` | 当前 `window`、最新回调、监听器、原始和包装后的 History 方法 | 无独立报告 |
+| `src/behavior/pageChange.ts` | 记录原生导航诊断信号 | 当前 `window`、最新回调、监听器、`previousUrl` | `hashchange`、`popstate` |
+| `src/behavior/click.ts` | 解析属性门控的点击 | 当前 `window`、最新回调、允许列表、监听器 | `click` |
+| `src/behavior/utils.ts` | 生成 Behavior 记录 ID | 无 | `uuid` |
+| `src/eventPath.ts` | 将事件路径中的浏览器宿主对象转换成字符串 | 无 | `string[]` |
 
-启动顺序：
+这些状态属于当前加载的 SDK 模块实例。页面中若加载两份独立 SDK，它们会分别持有监听器、去重游标和 History 包装状态。
 
-1. `observeClick`（`clickAttributes` 规范化后为空时不安装监听器）
-2. `observePageChange`
-3. `observeAutoPageView`（仅当 `autoPageView !== false`）
-4. `observePV`（立即采集当前页）
+## 4. 聚合启动与停止
 
-这个顺序只表示注册顺序。首条 PV 会在启动时立刻发出；后续 Hash / History 变化产生的 PV 取决于用户导航时机。
+### 4.1 启动顺序
 
-`monitor.behavior()` 与 `observeBehavior()` 等价。`stopObserveBehavior()` 会：
-
-- 停止 click、page change、自动 PV；
-- 还原被包装的 `history.pushState` / `history.replaceState`；
-- 调用 `clearPageViewDedup()`，清除去重缓存，使下次启动能重新记录当前页。
-
-`stopObservePageChange()` 也会顺带调用 `stopObserveAutoPageView()`，避免只停止地址变化监听后仍留下 History 劫持。`observePV()` 本身不注册监听器。
-
-在服务端渲染、没有 `window` / `document` / `performance` 时，观察器直接返回，不抛错，也不会生成报告。
-
-## 2. 架构总览
-
-行为模块拆成四个职责清晰的文件：
-
-| 文件 | 职责 | 产出 `subType` |
-| --- | --- | --- |
-| `pv.ts` | 唯一 PV 出口；连续相同 `pageUrl` 去重 | `pv` |
-| `autoPageView.ts` | 监听 Hash / History，并包装 History API，调用 `observePV` | 无独立 `subType`，最终仍是 `pv` |
-| `pageChange.ts` | 记录原生 `hashchange` / `popstate` 的 from/to | `hashchange`、`popstate` |
-| `click.ts` | 捕获阶段监听 `click`，解析最近的已标记祖先 | `click` |
-
-数据流：
+`observeBehavior(options)` 按固定顺序同步执行：
 
 ```text
-behavior() 首屏
-  -> observePV()
-       -> 连续相同 pageUrl？跳过 : dispatchReport(subType: "pv")
-
-URL 变化触发源
-  hashchange / popstate / pushState 包装 / replaceState 包装
-  -> observeAutoPageView
-       -> observePV()   （同一去重出口）
-
-业务路由钩子 afterEach / useLocation
-  -> observePV()       （同一去重出口）
-
-原生地址事件（并行）
-  hashchange / popstate
-  -> observePageChange
-       -> dispatchReport(subType: "hashchange" | "popstate")
+observeBehavior(options)
+  -> observeClick({ onReport, clickAttributes })
+  -> observePageChange(onReport)
+  -> autoPageView === false
+       ? stopObserveAutoPageView()
+       : observeAutoPageView(onReport)
+  -> observePV(onReport)                  // 立即尝试首条 PV
 ```
 
-设计约束：
+设计考虑：
 
-1. **通用 SDK 不依赖路由框架。** 包根不引入 `vue-router` / `react-router`。
-2. **PV 只有一个出口。** 首屏、自动监听、业务手动调用都走 `observePV()`。
-3. **自动监听与精确上报可并存。** 连续相同 `pageUrl` 去重，避免双计。
-4. **`pageChange` 不是 PV。** 看板和漏斗应消费 `subType: "pv"`。
+1. 先装监听器，再记录当前页，避免初始化过程中发生的后续导航没有观察者。
+2. 点击配置与页面访问相互独立；没有有效 `clickAttributes` 只会关闭点击。
+3. 所有首屏和后续 PV 最终都经过 `observePV()`，共用字段构造与去重规则。
 
-## 3. PV 页面访问
+对同一个 `window` 重复启动时，长期监听模块只更新最新回调或配置，不重复安装监听器；但聚合入口仍会再次调用 `observePV()`，相同 URL 通常会被去重。
 
-入口：`observePV(onReport?)`。调用即按当前地址采集一次。返回 `void`；数据通过统一分发、订阅和可选回调产生。
+### 4.2 停止边界
 
-### 3.1 采集步骤
+| API | 实际效果 |
+| --- | --- |
+| `stopObserveClick()` | 移除点击监听，清空点击回调和允许列表 |
+| `stopObserveAutoPageView()` | 移除自动 PV 的原生事件监听，按条件恢复 History 方法 |
+| `stopObservePageChange()` | 移除原生地址变化监听、清空 URL 游标，并同时停止自动 PV |
+| `stopObserveBehavior()` | 依次停止点击、地址变化和自动 PV，再清除 PV 去重地址 |
 
-1. 检查 `window`、`document`、`performance`。
-2. 读取 `window.location.href` 作为 `pageUrl`。
-3. 若 `pageUrl === lastReportedPageUrl`，直接返回，不上报。
-4. 写入去重缓存，读取 `performance.now()` 与 `document.referrer`。
-5. 用 `generateBehaviorId()` 生成 `uuid`。
-6. `dispatchReport` 交给网络批处理、本地订阅和本次回调。
+`stopObserveBehavior()` 不会：
+
+- 发送或清空共享上报队列；
+- 取消通过 `subscribe()` 注册的全局订阅；
+- 重置 `init()` 写入的配置或报告会话 ID；
+- 停止 performance、error 或 replay 模块；
+- 撤回已经交给传输层的数据。
+
+## 5. 统一分发调用链
+
+每个采集器构造普通、可序列化的报告对象后调用同一个 `dispatchReport()`：
+
+```text
+Behavior collector
+  -> dispatchReport(report, onReport)
+       -> lazyReportBatch(report)          // 配置了 url 才入队；入队时克隆
+            -> 达到 batchSize / 生命周期 flush
+                 -> getCache()             // 再次克隆
+                 -> createEnvelope(batch)
+                 -> Image / Beacon / XHR
+       -> notifyReportListeners(report)    // 全局 subscribe()，逐个隔离异常
+       -> onReport(report)                 // 本次观察器回调，隔离异常
+```
+
+需要区分三条出口：
+
+- **共享网络队列**保存报告副本。未配置 `url` 时不会入队，也不会在以后补发。
+- **全局 `subscribe()`** 接收每条原始报告，不接收批数组或 envelope。
+- **`onReport`** 只额外接收本次观察器的报告，不替代前两条路径。
+
+队列先克隆，订阅者随后按注册顺序接收同一个原始对象。因此，订阅者修改对象不会影响已排队的副本，但可能影响后续订阅者和 `onReport` 看到的值。不要依赖订阅回调清洗已经进入网络队列的数据。
+
+传输返回成功只表示客户端已经接受或安排这次发送：Beacon 返回接受状态，XHR 返回已安排异步任务，Image 返回已设置 `src`。它们都不是服务端持久化确认。
+
+## 6. PV：`observePV`
+
+### 6.1 调用链与实现
+
+```text
+observePV(onReport?)
+  -> 检查 window / document / performance
+  -> pageUrl = window.location.href
+  -> pageUrl === lastReportedPageUrl ? 返回
+  -> lastReportedPageUrl = pageUrl
+  -> 构造 PageViewReportData
+  -> dispatchReport(report, onReport)
+```
+
+报告结构：
 
 ```ts
 interface PageViewReportData {
   type: "behavior";
   subType: "pv";
-  startTime: number; // 页面时间原点后的毫秒数
+  startTime: number;
   pageUrl: string;
   referrer: string;
   uuid: string;
 }
 ```
 
-`referrer` 来自浏览器的 `document.referrer`，直接打开页面时可能为空。SPA 内跳转通常不会把它改成上一个前端路由；第一版刻意保持该浏览器语义，避免 silently 把字段改成 SDK 自维护的“上一页”。`uuid` 只标识本条行为数据，不是用户 ID 或会话 ID。
+字段来源：
 
-### 3.2 去重规则
+- `startTime`：`performance.now()`，是页面时间原点后的毫秒数，不是 Unix 时间；
+- `pageUrl`：采集时的完整 `window.location.href`；
+- `referrer`：浏览器的 `document.referrer`；
+- `uuid`：`generateBehaviorId()` 生成的本条 Behavior ID。
 
-模块级变量 `lastReportedPageUrl` 记录最近一次**成功进入上报**的地址：
+`document.referrer` 通常不会在 SPA 内部跳转时变成上一条前端路由。它保留浏览器文档来源语义，不是 SDK 维护的“上一页”。
 
-- 连续两次 `observePV()` 且 `location.href` 相同 → 第二次跳过；
-- 地址变化后再调用 → 重新上报；
-- `clearPageViewDedup()` / `stopObserveBehavior()` 会清空缓存。
+### 6.2 去重规则
 
-比较的是完整 `href`，因此 pathname、search、hash 任一变化都会产生新的 PV。这符合“URL 变了就算一次访问”的默认产品语义；若业务只想按 pathname 计 PV，需要自行在路由钩子里规范化后再调用，或关闭自动 PV。
+`lastReportedPageUrl` 是模块级的单一游标，规则是“连续完整 URL 相同则跳过”：
 
-### 3.3 默认自动与精确模式
+- `A -> A`：第二次跳过；
+- `A -> B -> A`：三次均可产生 PV；
+- pathname、query 或 hash 任一部分变化：视为新 URL；
+- `stopObserveBehavior()` / `clearPageViewDedup()`：清除游标，重启后同一 URL 可再次记录。
 
-`monitor.behavior()` 默认 `autoPageView: true`：
+游标在调用 `dispatchReport()` **之前**写入。因此这里的“已记录”只表示采集器接受了该 URL，不表示已经入队、发送或被服务端接收。即使没有配置 `url`，相同 URL 的下一次调用也会被去重。
 
-- 启动时立即采集当前页；
-- 之后由 `observeAutoPageView` 在 URL 变化时继续调用 `observePV()`。
+当前 API 不接收自定义 URL、路由名或规范化函数。若要按 `/users/:id`、pathname 或其他业务维度聚合，应在消费端或服务端派生该维度；不能通过给 `observePV()` 传入规范化 URL 实现。
 
-业务若能确认导航成功，仍可在路由钩子里调用 `observePV()`。相同地址不会重复计数。
+### 6.3 自动模式与业务确认模式
 
-需要完全由业务决定何时记 PV 时：
+默认 `monitor.behavior()`：
+
+1. 启动时立即尝试当前页 PV；
+2. 后续由自动 PV 监听 URL 变化。
+
+自动模式只能确认浏览器 URL 在某个触发点发生了变化，不能确认：
+
+- 路由守卫已经通过；
+- 重定向已经到达最终地址；
+- 页面数据已经加载；
+- 组件已经渲染；
+- 实际地址已经映射到业务路由模板。
+
+如果必须以路由成功钩子作为后续 PV 的唯一依据：
 
 ```ts
 monitor.behavior({ autoPageView: false });
-```
 
-此时 SDK 只在启动时采集一次，不会包装 History，也不会为 `hashchange` / `popstate` 自动记 PV。后续跳转由业务调用 `observePV()`。
-
-自动 PV 只知道 URL 变了。它不能判断：
-
-- 路由守卫是否取消导航；
-- 重定向最终落在哪个路由；
-- 页面组件是否已经渲染完成；
-- 路由模板是 `/users/:id` 还是实际地址 `/users/123`。
-
-这些场景应在导航成功后手动调用 `observePV()`。
-
-## 4. 自动 PV：`observeAutoPageView`
-
-入口：`observeAutoPageView(onReport?)`。通常由 `observeBehavior` 代为启动，也可单独使用。
-
-### 4.1 覆盖的触发源
-
-| 触发源 | 是否覆盖 | 说明 |
-| --- | --- | --- |
-| `hashchange` | 是 | 含代码改 `location.hash` 和前进/后退 |
-| `popstate` | 是 | 浏览器前进/后退等历史记录切换 |
-| `history.pushState` | 是 | 包装后在原方法成功返回时上报 |
-| `history.replaceState` | 是 | 同上 |
-| 仅改 `location.pathname` 且不经过 History API | 否 | 整页跳转会重新加载，由新页面的首屏 PV 覆盖 |
-
-原生 `popstate` **听不到**代码主动调用的 `pushState` / `replaceState`。这是通用 SPA（Vue Router / React Router History 模式）丢 PV 的常见原因，所以 SDK 需要包装这两个方法。
-
-### 4.2 History 包装步骤
-
-1. 保存 `history.pushState` / `history.replaceState` 的原始实现。
-2. 用包装函数替换它们。
-3. 包装函数先 `Reflect.apply` 调用原方法，保留原始 `this` 和全部参数。
-4. 原方法成功返回后，调用 `observePV(reportHandler)`。
-5. 把原方法的返回值原样返回，不改变业务行为。
-
-原方法若同步抛错，不会进入上报。停止时只有当前方法仍等于 SDK 包装函数，才还原；若其他工具在期间再次替换了 History 方法，SDK 不覆盖它。这与 Fetch / XHR 包装的停止策略一致。
-
-### 4.3 与 `pageChange` 的关系
-
-同一次 Hash 导航可能同时触发：
-
-- `pageChange` 的 `hashchange` 报告（含 `from` / `to`）；
-- 自动 PV 的 `pv` 报告。
-
-同一次 `pushState`：
-
-- **不会**产生 `pageChange`（因为没有 `popstate`）；
-- **会**产生自动 PV。
-
-因此消费侧：
-
-- 统计“看了哪个页” → 用 `subType: "pv"`；
-- 调试原生 Hash / 前进后退链路 → 用 `subType: "hashchange" | "popstate"`。
-
-### 4.4 重复启动与停止
-
-对同一 `window` 重复调用 `observeAutoPageView` 只更新回调，不重复安装监听器、不重复包装 History。换到新的 `window` 时会先停止旧实例再安装。
-
-`stopObserveAutoPageView()` 移除 `hashchange` / `popstate` 监听，并还原 History 方法。
-
-### 4.5 设计考虑与实现亮点
-
-1. **完整覆盖 SPA 路由变化**：监听 `hashchange`、`popstate`，同时包装 `history.pushState()` 和 `history.replaceState()`，弥补后两者不会触发 `popstate` 的问题。
-2. **不改变 History 原方法的行为**：通过 `Reflect.apply(original, this, args)` 保留原始 `this` 和参数；先执行原方法，成功后才上报，并将执行结果原样返回。
-3. **避免重复初始化**：使用 `observedWindow` 判断是否已监听同一个 `window`。重复调用时仅通过 `reportHandler = onReport` 更新最新回调，不重复注册事件或包装 History。
-4. **安全恢复 History 方法**：同时保存原始函数和本模块安装的包装函数。若其他工具后来再次包装该方法，SDK 停止时不会强行覆盖它；各工具应按与安装相反的顺序停止（后安装、先卸载），才能逐层恢复原方法。
-5. **完整清理资源**：保存事件处理函数引用，以便准确调用 `removeEventListener()`；停止后清空所有模块状态，支持安全地重复停止和重新启动。
-6. **兼容 SSR 和非浏览器环境**：初始化前检查 `window`、`performance` 和 `addEventListener`，缺少浏览器能力时直接返回，避免运行时报错。
-7. **职责分离并避免重复 PV**：本模块只负责感知 URL 变化，再统一调用 `observePV()`；具体的数据生成、分发及相同 URL 去重由 `pv.ts` 负责。
-
-整体上，它通过“监听浏览器事件 + 包装 History API”覆盖 SPA 导航，同时利用状态缓存、透明调用和条件恢复，保证监听可复用、可清理且不干扰业务及其他工具。
-
-## 5. 属性门控的点击上报
-
-入口是 `observeClick(options?)`，通常由 `observeBehavior({ clickAttributes })` 代为启动。点击不是默认采集项。
-
-```ts
-monitor.behavior({
-  clickAttributes: ["clstag"],
+router.afterEach(() => {
+  observePV();
 });
 ```
 
-```html
-<button type="button" clstag="checkout-submit">提交订单</button>
-```
+`autoPageView: false` 仍会保留 `observeBehavior()` 启动末尾的首条 PV，只关闭后续自动 PV。若连首条 PV 也必须由业务决定，应组合所需的细粒度观察器，而不是直接调用聚合入口。
 
-省略 `clickAttributes`、传入空数组，或列表里只剩空白和非字符串时，SDK 不安装点击监听器，也不上报点击。这只关闭点击。`observeBehavior` 仍会采集当前页 PV，并继续监听地址变化。
+不要把“默认自动 PV + 路由成功钩子”描述为成功语义：自动包装可能已经先记录同一 URL，后续钩子调用只会被去重，不能替换前一条报告或改变其时间。
 
-`clickAttributes` 会被复制、去掉首尾空白并去重。调用方事后修改原数组，不会改变已经生效的允许列表。对同一个 `window` 重复启动只更新回调和允许列表，不重复安装监听器；允许列表变为空时会移除已有监听器。`stopObserveClick()` 移除监听器，并清空回调与允许列表。没有 `window` 时直接返回，不抛错。
+## 7. 自动 PV：`observeAutoPageView`
 
-### 5.1 捕获阶段的 `click`
+### 7.1 触发矩阵
 
-监听器是 `window.addEventListener("click", handler, true)`。采集发生在捕获阶段，因此目标在冒泡阶段调用 `stopPropagation()` 挡不住这次采集。SDK 不调用 `preventDefault()`，也不改变点击的默认行为。
-
-上报的是浏览器 `click`，不是 `mousedown` 或 `touchstart`。一次完成的指针或键盘激活通常只产生一条 `click`。按下后没有形成 `click` 的指针移动，以及单独的 `touchstart`，都不会上报。
-
-### 5.2 最近的已标记祖先
-
-处理 `click` 时，SDK 沿 `event.composedPath()` 从事件目标向外查找；旧环境没有 `composedPath` 时回退 `event.path`。路径上第一个带有任一允许属性的元素就是上报目标。点击标记元素内部的子节点时，上报的是该标记祖先，不是子节点本身。
-
-路径上有多层标记时，只采用最近的一层，不会把外层标记合并进来。路径上没有任何允许属性时，这次交互被忽略，不产生报告。允许列表之外的属性不会进入报告。
-
-显式空值仍然是有效标记。`<button clstag="">` 会被命中，对应字段是空字符串。元素上根本没有该属性时，则不是标记。
-
-同一元素上的多个允许属性会全部写入 `attributes`。例如允许 `clstag` 和 `data-id`，元素同时带有这两个属性时，报告包含两者；只带其中一个时，只包含存在的那个。
-
-### 5.3 报告字段
-
-```ts
-interface ClickReportData {
-  type: "behavior";
-  subType: "click";
-  target: string; // 命中元素的标签名，如 BUTTON
-  startTime: number; // event.timeStamp
-  width: number; // CSS 像素，缺失时为 0
-  height: number;
-  eventType: "click";
-  attributes: Record<string, string>; // 仅命中元素上的允许属性
-  path?: string[]; // 节点名称；环境不支持时省略
-}
-```
-
-`path` 只保存节点名称。`getSerializableEventPath()` 在调用 `dispatchReport` 之前，把 `Window`、`Document` 和 DOM 节点转换成字符串，浏览器对象不会进入上报队列。详见 [点击后错误不上报及页面卡顿解决方案](solutions/click-event-path-reporting.md)。
-
-报告包含命中的允许属性和可序列化的交互元数据：标签名、事件时间戳、事件类型、布局宽高，以及可选的节点名称路径。报告不包含 `innerHtml`、`outerHtml`、DOM 节点，也不包含未允许的属性。
-
-### 5.4 从自动 `mousedown` / `touchstart` 迁移
-
-旧版本在捕获阶段自动监听每一次 `mousedown` 和 `touchstart`，不需要标记。当前版本改为显式开启：
-
-| | 旧行为 | 当前行为 |
+| 触发源 | 自动 PV | 原生 `pageChange` |
 | --- | --- | --- |
-| 触发事件 | `mousedown`、`touchstart` | 捕获阶段的浏览器 `click` |
-| 哪些交互上报 | 页面上每一次指针按下 | 仅当最近祖先带有允许属性 |
-| 未配置时 | 仍然采集点击 | 不安装监听器；PV 与地址变化继续采集 |
-| 目标元素 | 事件目标本身 | 路径上最近的已标记祖先 |
-| `eventType` | `"mousedown"` \| `"touchstart"` | `"click"` |
-| 元素内容 | `innerHtml`、`outerHtml` | 不再提供这两个字段 |
-| 业务标记 | 无 | `attributes`，只含允许的属性名和值 |
+| `hashchange` | 调用 `observePV()` | `hashchange` |
+| `popstate` | 调用 `observePV()` | `popstate` |
+| `history.pushState()` | 包装后调用 `observePV()` | 无 |
+| `history.replaceState()` | 包装后调用 `observePV()` | 无 |
 
-接入时配置 `clickAttributes`（例如 `["clstag"]`），给要统计的控件写上稳定的属性值，并停止依赖 `innerHtml`、`outerHtml` 或 `mousedown` 时间点。未标记的点击现在会被忽略。
+浏览器主动调用 `pushState()` / `replaceState()` 不会触发 `popstate`，因此仅监听原生事件无法覆盖常见 History 模式 SPA。
 
-### 5.5 属性值与隐私
+### 7.2 History 包装
 
-允许的属性值由应用自己写入。SDK 原样复制，不会脱敏或截断。这些值不得包含密钥、个人数据、用户输入或无边界的标识，例如会话令牌、邮箱、自由文本，以及可以关联到个人的无上限 ID。适合放进 `clstag` 的是稳定的动作名，例如 `checkout-submit`，而不是按钮当前显示的文案，或用户填入的内容。
+```text
+业务调用 history.pushState / replaceState
+  -> SDK wrapper
+       -> Reflect.apply(original, this, args)
+       -> 原方法正常返回后 observePV(latestHandler)
+       -> 返回原始结果
+```
 
-## 6. 地址变化：`observePageChange`
+这样设计是为了：
 
-入口：`observePageChange(onReport?)`。监听捕获阶段的 `hashchange` 和 `popstate`。初始化时保存 `window.location.href`。
+1. 保留原方法的 `this`、参数、返回值和同步异常；
+2. 只有浏览器原方法成功返回后才读取当前 URL；
+3. 把报告字段和去重统一留给 `observePV()`；
+4. 不引入任何路由框架依赖。
 
-- `hashchange`：使用事件的 `oldURL` 和 `newURL`；
-- `popstate`：使用上次保存的 URL 和当前 URL；
-- 读取 `performance.now()`，生成 UUID，分发后更新上次 URL。
+只有 `pushState` 和 `replaceState` 同时是函数时才会安装两个包装。只存在其中一个的特殊环境不会包装任何一个。
+
+### 7.3 重复启动与恢复
+
+同一个 `window` 上重复调用只更新 `reportHandler`。切换到新的 `window` 时，模块会先停止旧实例，再安装新监听器和包装。
+
+停止时只有当前 History 方法仍然等于 SDK 安装的 wrapper，才恢复保存的原方法。这避免覆盖其他工具后来安装的包装，但也意味着：
+
+```text
+original O -> SDK wrapper S -> third-party wrapper T
+```
+
+SDK 停止时看到的是 `T`，不会用 `O` 覆盖它。如果 `T` 仍调用捕获的 `S`，自动 PV 逻辑仍可能被间接触发。多个包装器应按“后安装、先卸载”的逆序清理。
+
+## 8. 原生地址变化：`observePageChange`
+
+`pageChange` 保留浏览器原生导航信号，用于诊断，不是准确的 SPA 路由事实表，也不是 PV。
+
+### 8.1 调用链
+
+```text
+observePageChange(onReport?)
+  -> previousUrl = window.location.href
+  -> addEventListener("hashchange", hashHandler, true)
+  -> addEventListener("popstate", popHandler, true)
+
+hashchange
+  -> reportPageChange("hashchange", event.oldURL, event.newURL)
+  -> previousUrl = event.newURL
+
+popstate
+  -> currentUrl = window.location.href
+  -> reportPageChange("popstate", previousUrl, currentUrl)
+  -> previousUrl = currentUrl
+```
+
+报告结构：
 
 ```ts
 interface PageChangeReportData {
@@ -327,19 +298,146 @@ interface PageChangeReportData {
 }
 ```
 
-`pushState` / `replaceState` 不会触发 `popstate`，因此也不会产生 `pageChange`。需要覆盖这两种导航时，应依赖自动 PV，或在业务路由成功后调用 `observePV()`。
+`startTime` 来自 `performance.now()`；`uuid` 是本条 Behavior ID。
 
-重复调用只更新回调。`stopObservePageChange()` 移除监听、清空 `previousUrl`，并调用 `stopObserveAutoPageView()` 还原 History 包装。
+### 8.2 URL 归因边界
 
-## 7. ID 和时间
+`hashchange` 自带 `oldURL` 和 `newURL`，模块直接使用它们。`popstate` 没有等价字段，只能用内部 `previousUrl` 作为 `from`。
 
-`generateBehaviorId()` 优先使用 `crypto.randomUUID()`，降级格式为 `behavior-${Date.now()}-${random}`。它不应作为安全凭证。
+`previousUrl` 只在以下时机更新：
 
-行为 `startTime` 是页面时间轴或事件时间戳，不是 Unix 时间。服务端应另记接收时间。`PageViewReportData.uuid` 与 envelope 的 `id`、会话 `sessionId` 都不是同一概念。
+- 初始化 `observePageChange()`；
+- 处理 `hashchange`；
+- 处理 `popstate`。
 
-## 8. Demo 中的用法
+它**不会**在 `pushState()` 或 `replaceState()` 时更新。例如：
 
-Vue demo（`demo/`）显式开启点击上报，允许的属性名是 `clstag`：
+```text
+初始化于 A       previousUrl = A
+pushState 到 B   自动 PV 记录 B；previousUrl 仍是 A
+随后 popstate    from 使用 A，未必是浏览器刚离开的实际 URL
+```
+
+因此不能假设 `popstate.from` 始终是实际上一跳，也不能承诺混合 History API 与原生遍历时总能形成严格连续的 `A -> B -> C` 链。片段历史遍历在浏览器中还可能同时涉及 `popstate` 和 `hashchange`；两条诊断信号不应重复计为访问量。
+
+`from` 和 `to` 都保留完整 URL，可能包含敏感 query 或 hash。SDK 不自动脱敏，应避免在 URL 中放敏感值，并在接收服务的存储/消费边界执行必要治理。
+
+### 8.3 生命周期
+
+对同一个 `window` 重复调用只替换最新回调，不重复安装监听器。`stopObservePageChange()` 使用保存的函数引用和相同捕获参数移除两个监听器，清空游标，并同时调用 `stopObserveAutoPageView()`；这个细粒度停止函数会影响自动 PV。
+
+## 9. 属性门控点击：`observeClick`
+
+点击默认关闭。只有有效允许列表才会安装捕获阶段监听器：
+
+```ts
+monitor.behavior({
+  clickAttributes: ["clstag"],
+});
+```
+
+```html
+<button type="button" clstag="checkout-submit">提交订单</button>
+```
+
+### 9.1 采集链路
+
+```text
+window capture-phase click
+  -> 允许列表为空？忽略
+  -> event.composedPath()，否则 event.path
+  -> 从内向外找到第一个带任一允许属性的元素
+  -> 收集该元素上存在的全部允许属性
+  -> getSerializableEventPath(event)
+  -> 构造 ClickReportData
+  -> dispatchReport(report, latestHandler)
+```
+
+允许列表会被复制、过滤非字符串、`trim`、去空并去重。调用方随后修改原数组不会改变已生效配置。重复启动可更新最新回调和允许列表而不重复安装监听器；新列表为空会移除已有监听器。
+
+选择路径上最近的标记元素，可以让按钮内部图标、文本或包装节点变化时仍归因到稳定的业务控件。如果内外层都标记，只报告最近一层；不会合并外层属性，也不会为同一次点击生成多条报告。同一命中元素上的多个允许属性会全部复制，显式空值保留为 `""`。
+
+### 9.2 报告结构
+
+```ts
+interface ClickReportData {
+  type: "behavior";
+  subType: "click";
+  target: string;
+  startTime: number;
+  width: number;
+  height: number;
+  eventType: "click";
+  attributes: Record<string, string>;
+  path?: string[];
+}
+```
+
+- `target`：命中元素的 `tagName`；
+- `startTime`：原始 `event.timeStamp`；
+- `width` / `height`：`offsetWidth` / `offsetHeight`，缺失时为 `0`；
+- `attributes`：只包含命中元素上的允许属性；
+- `path`：节点名称字符串，不包含 DOM 引用。
+
+报告不包含 `innerHtml`、`outerHtml`、任意未允许属性、原始 `Event`、DOM、`Window` 或 `Document` 对象。
+
+### 9.3 兼容性与行为边界
+
+- 监听的是语义化浏览器 `click`，不是 `mousedown`、`touchstart`、拖拽或手势事件；
+- 监听器位于 `window` 捕获阶段，不调用 `preventDefault()`；
+- 目标解析依赖 `composedPath()` 或旧式 `event.path`；当前实现不会从 `event.target` 手动向父级遍历，两者都缺失时点击被忽略；
+- 不检查 `event.isTrusted`，因此 `element.click()` 等程序化点击也可能上报；
+- 没有节流、去抖、采样或同点击去重，每次符合条件的事件都会分发；
+- `composedPath()` 会分别用于目标解析和可序列化路径生成，即一条已命中的点击通常读取两次路径；
+- `dispatchReport()` 之后的队列、订阅和回调异常会被隔离，但采集阶段没有覆盖整个监听器的最外层 `try/catch`；异常的 `composedPath()`、`hasAttribute()` 或 `getAttribute()` 仍可能逃逸。
+
+允许列表只批准**属性名**。属性值会原样复制，不校验、不脱敏、不截断。只应使用稳定、有限、低基数的动作名，禁止令牌、个人数据、用户输入、自由文本和无边界用户/订单 ID。
+
+完整设计、旧版迁移、H5/WebView/小程序边界及隐私清单见 [点击采集设计](click-tracking.md)。
+
+## 10. 可序列化事件路径
+
+`getSerializableEventPath()` 优先读取 `event.composedPath()`，否则读取 `event.path`，再按以下顺序把每个宿主对象转换成字符串：
+
+1. 当前全局 `window` → `"Window"`；
+2. 当前全局 `document` → `"Document"`；
+3. 字符串 `tagName`；
+4. 字符串 `nodeName`；
+5. 构造器名称；
+6. `"EventTarget"`。
+
+这项转换必须发生在 `dispatchReport()` 之前。原始 DOM、`Document` 和 `Window` 体积大、持有对象图并常含循环引用；一旦进入共享缓存，JSON 序列化失败的记录会留在队列中并阻塞后续 Behavior、Error 等报告。事故背景见 [点击后错误不上报及页面卡顿解决方案](solutions/click-event-path-reporting.md)。
+
+## 11. ID、时间与页面上下文
+
+`generateBehaviorId()` 优先调用 `crypto.randomUUID()`；不可用时生成 `behavior-${Date.now()}-${random}`。它不是用户 ID、会话 ID、envelope ID 或安全凭证。PV 和 page change 带有该 `uuid`，click 当前没有。
+
+| 值 | 产生时机 | 语义 |
+| --- | --- | --- |
+| PV / page change `startTime` | 采集时 | `performance.now()` 的页面相对时间 |
+| click `startTime` | 事件创建时 | `event.timeStamp` |
+| envelope `timestamp` | 批次 flush、组装 envelope 时 | `Date.now()` 的绝对时间 |
+| PV `pageUrl` | PV 采集时 | 该 PV 的完整 URL |
+| page change `from` / `to` | 原生事件处理时 | 原生事件或模块游标推导的 URL |
+| envelope `environment.url` | 批次 flush 时 | 发送时当前 URL |
+
+点击报告没有独立的事件时 `pageUrl`。如果一个批次跨越 SPA 导航，多个点击可能共享较晚 flush 时读取的 envelope URL；server 也会把该 envelope URL作为这一批通用事件的 `page_url`。不要把它当作严格的点击发生页归因。
+
+## 12. 数据治理与运行环境
+
+- PV、page change 和 envelope 会保留完整 URL；query/hash 可能携带敏感数据；
+- 点击标记值由业务提供，SDK 不验证其安全性；
+- 点击路径仍会暴露标签层级，envelope 还包含配置的 `userId`、user agent 和语言；
+- 需要用户同意后才能采集时，应延迟调用 `behavior()`；只省略 `clickAttributes` 仍会采集 PV 和原生导航；
+- 监听器只作用于安装它的 `window`。iframe 是独立浏览上下文；父页面不能借此采集跨域 iframe 内部点击；
+- 缺少所需浏览器对象时，各观察器直接返回。SSR 安全不等于所有不完整 WebView API 都具备完整降级能力；
+- bfcache 同 URL 恢复没有专门的 `pageshow` 采集逻辑，不能假设每次恢复都会产生新 PV。
+
+仓库内 server 不校验 Behavior 各 subtype 的完整字段，也不使用 Behavior `uuid` 去重；平台当前以通用事件列表展示这些 JSON，没有专用 PV、点击或漏斗分析。
+
+## 13. Demo 与验证覆盖
+
+Vue demo 在 `demo/src/startMonitoring.ts` 显式配置：
 
 ```ts
 frontendMonitor.behavior({
@@ -347,8 +445,19 @@ frontendMonitor.behavior({
 });
 ```
 
-`demo/src/startMonitoring.ts` 使用这份配置。行为区里需要上报的控件带有稳定的 `clstag` 值，描述的是动作而不是用户数据。页面上保留未标记对照：它仍然可以点击，但不会产生点击报告。Hash 切换走 `hashchange`，History 切换内部调用 `history.pushState`，两者都会自动记 PV。
+标记按钮会产生 `click`；未标记对照按钮仍执行应用动作，但不产生点击报告。Hash 导航产生 `hashchange` 和 PV；`pushState()` 产生 PV，不产生 page change。
 
-React demo（`react-demo/`）调用 `frontendMonitor.behavior()` 时不传 `clickAttributes`。它只演示页面访问和导航，不产生点击报告。侧边栏 Hash 导航（`#/console`、`#/reports`、`#/coverage`）以及事件触发器里的 History 按钮，都会自动产生 `subType: "pv"`。
+React demo 的 `react-demo/src/main.tsx` 调用 `behavior()` 时没有传 `clickAttributes`，因此只演示 PV 和导航，不采集点击。UI 中历史遗留的 Click/Touch 展示不能作为实际初始化配置或 API 契约。
 
-更偏设计决策与接入选型的说明见 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)；业务路由钩子示例见 [业务侧使用说明](business-usage.md) §11。
+主要测试证据：
+
+| 测试 | 覆盖内容 |
+| --- | --- |
+| `test/behavior.test.ts` | 初始 PV、原生导航、点击门控与规范化、最近标记祖先、去重、History 包装与恢复、`autoPageView: false` |
+| `test/initReporting.test.ts` | Behavior 进入统一 envelope、事件路径可序列化 |
+| `test/unifiedReport.test.ts` | Behavior 与其他模块共用统一分发器 |
+| `demo/clickTracking.test.ts` | Vue demo 标记/未标记控件的 jsdom 集成行为 |
+
+仓库目前没有真实浏览器 Behavior E2E。Vitest/jsdom 验证不能等同于 Chrome、Firefox、Safari、真实 Shadow DOM、bfcache 或浏览器导航事件顺序的兼容性证明。`npm run test:e2e` 是 server operational E2E，也不是浏览器 Behavior E2E。
+
+业务侧路由接入示例见 [业务侧使用说明](business-usage.md) §11；共享缓存、envelope 和传输实现见 [SDK 公共入口与内部链路](sdk-internals.md)。

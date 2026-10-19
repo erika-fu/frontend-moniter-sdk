@@ -116,19 +116,16 @@ frontendMonitor.error();
 frontendMonitor.replay();
 ```
 
-`clickAttributes` is the allowlist of DOM attribute names that opt an element
-into click reporting. `clstag` above is an example name. Omitting
-`clickAttributes`, or passing an empty list, disables click reporting only.
-Page-view and navigation monitoring still start.
+`init()` 只更新上报配置，不会启动监控。`behavior()` 启动时立即记录当前页
+PV，默认继续监听 URL 变化，并独立记录原生 `hashchange` / `popstate` 诊断信号。
+`clickAttributes` 是允许采集的 DOM 属性名列表，`clstag` 是示例；省略或传入空
+列表时只关闭点击采集，PV 与地址变化仍会启动。
 
-The SDK batches reports, prefers `navigator.sendBeacon`, and falls back to an
-unmonitored `XMLHttpRequest`. Set `isImageUpload: true` to send the encoded
-payload in the `data` query parameter of an image request. Without `url`, no
-network request is made and `onReport` continues to receive every report.
-
-Use `frontendMonitor.subscribe(handler)` when the application also needs to
-observe collected data locally. Subscriptions do not configure or replace
-network reporting.
+SDK 批量发送报告，优先使用 `navigator.sendBeacon`，再回退到未被监控包装的
+`XMLHttpRequest`。设置 `isImageUpload: true` 可通过图片请求的 `data` 查询参数
+发送编码后的载荷。未配置 `url` 时不发网络请求，但 `onReport` 与
+`frontendMonitor.subscribe(handler)` 仍可在本地接收单条报告。传输被接受或安排
+不等于服务端已经持久化。
 
 Session replay uses rrweb. It masks all input values by default and blocks
 elements with the `monitor-block` class or `data-monitor-mask` attribute.
@@ -195,12 +192,12 @@ Then visit `http://localhost:4173/`.
 
 - [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA PV 接入
 - [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
-- [Behavior 用户行为监控](docs/behavior.md)：自动 PV、去重、属性门控点击、hash/history 和 ID
+- [Behavior 用户行为监控](docs/behavior.md)：各功能模块的实现、调用链、设计理由、生命周期和边界
+- [点击采集设计](docs/click-tracking.md)：属性门控、事件路径、旧版迁移、跨端边界和隐私治理
 - [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
 - [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位
 - [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输、History 包装和事件路径
 - [Server 服务端文档](docs/server.md)：启动、版本化上报、SQLite、查询 API、SourceMap、错误和回放
-- [SPA 页面访问（PV）自动采集设计](docs/solutions/spa-page-view-tracking.md)：自动 PV 背景、方案取舍与验证要点
 
 ## Report server
 
@@ -227,11 +224,10 @@ monitor.init({
 可通过环境变量配置。完整的请求字段、响应示例、限制和生产部署注意事项见
 [Server 服务端文档](docs/server.md)。
 
-The Vue demo uses hash routing:
-
-- `#/` for the monitoring dashboard
-- `#/reports` for the full report list
-- `#/about` for SDK notes
+Vue demo 是单页监控场景页：带 `clstag` 的 Hash 按钮切换到
+`#/scenario/orders` 或 `#/scenario/profile`，History 按钮通过
+`history.pushState()` 修改查询参数；页面还保留一个未标记按钮用于验证它不会产生
+点击报告。
 
 ## License
 

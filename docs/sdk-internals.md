@@ -21,7 +21,7 @@
   -> 当前 onReport(data)
 ```
 
-三条路径都做异常隔离，监控逻辑不会因业务回调或发送实现抛错而影响页面。
+统一分发后的三条路径分别做异常隔离：网络批处理、每个全局订阅者和当前 `onReport` 的异常不会互相传播。采集器进入 `dispatchReport()` 前对异常宿主 API 的处理不在这项保证内。队列在入队时保存副本；全局订阅者和 `onReport` 则按顺序接收同一个原始对象，较早订阅者的修改可能影响后续本地消费者，但不会回写已排队副本。
 
 ## 3. 配置
 
@@ -39,13 +39,13 @@
 }
 ```
 
-`setConfig` 只修改非 `undefined` 字段；`getReportConfig` 返回浅副本；`resetReportConfig` 恢复默认值。`release` 会附加到有堆栈意义的 JavaScript、Promise、Vue 和 React 错误，用于服务端选择 SourceMap，不属于 envelope 字段。配置是页面/模块级状态，不是每条报告独立配置。
+`setConfig` 只修改非 `undefined` 字段；`getReportConfig` 返回浅副本；`resetReportConfig` 恢复默认值。`release` 既属于统一 envelope，也会写入有堆栈意义的 JavaScript、Promise、Vue 和 React 错误，供服务端选择 SourceMap。配置是页面/模块级状态，不是每条报告独立配置。
 
 ## 4. 缓存和订阅
 
 `src/cache.ts` 只在模块内部持有缓存。入队和读取都会复制数据，优先使用 `structuredClone`，失败后递归处理数组、普通对象、Date、RegExp 和循环引用，防止回调修改待发送数据。
 
-`flushQueue` 先取快照再发送，只有传输返回 true 才清空；因此 Beacon 被拒绝时数据仍在缓存。`subscribeReports(listener)` 返回取消函数，所有订阅者分别 try/catch；订阅收到的是单条原始采集数据，不是 envelope。
+`flushQueue` 先取快照再发送，只有传输函数返回 true 才清空；Beacon 被拒绝时数据仍在缓存。对 XHR 来说，true 只表示异步任务已经安排；对 Image 来说，true 只表示已设置 `src`，二者都不是服务端持久化确认。`subscribeReports(listener)` 返回取消函数，所有订阅者分别 try/catch；订阅收到的是单条原始采集数据，不是 envelope。
 
 ## 5. Report API
 
@@ -59,7 +59,7 @@
 | `flushReportQueue()` | 无 | `boolean` | 立即发送缓存 |
 | `clearReportQueue()` | 无 | `void` | 内部清空缓存；当前未从包根导出 |
 
-`createEnvelope` 生成 `{ id, projectName, appId, userId, data }`。SDK 在模块加载时捕获原始 XHR `open/send`，避免启用 XHR 监控后把 SDK 自己的上传请求再次采集。
+`createEnvelope` 生成 `ReportEnvelope`：包含 `protocolVersion`、报告 `id`、项目/应用标识、稳定的 `sessionId`、flush 时的 `timestamp`、`release`、`userId` / `user.id`、flush 时读取的 `environment`（URL、user agent、语言）以及 `data`。批次跨越 SPA 导航时，envelope URL 不一定是每条事件的采集页；应优先使用报告自身的事件时字段，例如 PV 的 `pageUrl`。SDK 在模块加载时捕获原始 XHR `open/send`，避免启用 XHR 监控后把 SDK 自己的上传请求再次采集。
 
 ## 6. 错误与录屏
 
@@ -84,7 +84,7 @@
 
 PV 去重状态保存在 `src/behavior/pv.ts` 的模块级变量中。`stopObserveBehavior()` 会调用 `clearPageViewDedup()`，避免停止后再启动时被旧地址挡住首条 PV。
 
-`pageChange` 与自动 PV 并行：前者产出 `hashchange` / `popstate` 底层信号，后者统一产出 `subType: "pv"`。细节见 [Behavior 用户行为监控](behavior.md) 和 [SPA 页面访问（PV）自动采集设计](solutions/spa-page-view-tracking.md)。
+`pageChange` 与自动 PV 并行：前者产出 `hashchange` / `popstate` 底层信号，后者统一产出 `subType: "pv"`。模块调用链、设计取舍和 URL 归因边界见 [Behavior 用户行为监控](behavior.md)。停止 Behavior 观察器只清理其监听器、History 包装和 PV 去重状态，不清共享上报队列，也不取消全局订阅。
 
 ## 9. 边界规则
 
