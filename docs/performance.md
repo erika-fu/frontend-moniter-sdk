@@ -1,250 +1,570 @@
 # Performance 性能监控
 
-本文对应 `src/performance/`。性能模块只负责从浏览器 API 和网络方法中采集、整理数据，然后交给统一分发器；它不要求业务为每一种指标分别实现上传。
+本文是 `src/performance/` 的权威实现指南，说明 SDK 如何采集性能数据、各采集器为何使用特定浏览器 API、报告如何经过共享上报管道，以及数据不得被过度解读的边界。
 
-## 1. 启动入口和生命周期
+该模块当前会产生七种报告子类型：
 
-公共入口 `src/index.ts` 重新导出 `observePerformance` 及七个细粒度观察器：
+- `first-paint`
+- `first-contentful-paint`
+- `largest-contentful-paint`
+- `load`
+- `resource`
+- `fetch`
+- `xhr`
+
+它不采集 CLS、INP、作为独立 Web Vital 的 TTFB、长任务、内存、FPS 或自定义标记。资源报告确实包含一个派生字段 `ttfb`，但该值描述的是单个资源请求，而非页面级 TTFB Web Vital。
+
+性能采集器只创建报告并将其交给 SDK 全局分发器。安装与应用集成见 [业务使用](business-usage.md)，共享缓存 / envelope / 传输行为见 [SDK 入口与内部机制](sdk-internals.md)，端点、存储、保留和查询契约见 [服务端文档](server.md)。
+
+## 1. 公共 API 与启动
+
+需要网络发送时，应先配置上报，再启动性能采集：
 
 ```ts
-import { observePerformance } from "frontend-moniter-sdk";
+import monitor from "frontend-moniter-sdk";
 
-observePerformance({
+monitor.init({
+  url: "/api/v1/reportData",
+  appId: "web",
+});
+
+monitor.performance({
   onReport(report) {
-    console.log(report);
+    console.log(report.subType, report);
   },
 });
 ```
 
-`observePerformance(options)` 的参数只有一个可选对象：
+`init()` 只更新共享上报配置。它不会安装采集器；仅回调或仅订阅的采集也不需要它。网络入队要求已配置 `url`。默认导出将聚合采集器同时暴露为 `performance` 和 `observePerformance`。
 
-| 参数 | 类型 | 含义 | 默认值 |
+`PerformanceMonitoringOptions` 有一个可选字段：
+
+| 参数 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
-| `options` | `PerformanceMonitoringOptions` | 本次启动的配置 | `{}` |
-| `options.onReport` | `(data: PerformanceReportData) => void` | 每条性能数据生成后调用的回调 | 不调用 |
+| `onReport` | `(report: PerformanceReportData) => void` | 无 | 接收此次聚合注册产生的每条报告；不替代全局订阅或网络上报 |
 
-该函数依次调用 `observePaint`、`observeFCP`、`observeLCP`、`observeLoad`、`observeResources`、`observeFetch`、`observeXHR`。这个顺序只表示注册顺序，不表示报告到达顺序。`load`、资源和 Web Vitals 可能在稍后才完成，请不要按数组顺序解释数据。
-
-重复启动的行为按观察器区分：
-
-- Fetch、XHR、错误和行为中的长期监听器会避免重复包装/注册，并只更新最新回调；
-- paint、FCP、LCP、load、resource 是一次性或由 `web-vitals` 管理的观察器，业务应在应用入口初始化一次；
-- Fetch 可用 `stopObserveFetch()` 停止并恢复原始 `window.fetch`，XHR 可用 `stopObserveXHR()` 停止并恢复原型方法；
-- `observePerformance` 没有总的 stop 函数；需要停止全部长期网络观察时，分别调用 `stopObserveFetch()` 和 `stopObserveXHR()`。
-
-在服务端渲染、没有 `window`/`document`、没有 `PerformanceObserver` 或没有对应浏览器 API 时，观察器直接返回，不抛错，也不会生成报告。
-
-## 2. 统一报告结构
-
-所有性能报告至少有：
+细粒度采集器从包根以命名导出的方式提供：
 
 ```ts
-{
-  type: "performance",
-  subType: string,
-  // 各子类型的字段
-}
+import {
+  observePaint,
+  observeFCP,
+  observeLCP,
+  observeLoad,
+  observeResources,
+  observeFetch,
+  stopObserveFetch,
+  observeXHR,
+  stopObserveXHR,
+} from "frontend-moniter-sdk";
 ```
 
-`type` 是一级分类；`subType` 是 TypeScript 判别字段。业务消费时应先判断 `subType`，再读取对应字段。
+默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch 和 XHR 包装器具有显式停止 API。
 
-页面指标通常增加 `pageUrl: window.location.href`。浏览器相对时间 `startTime`、`duration` 的原点通常是本次页面导航的时间原点；Fetch/XHR 的 `startTime` 和 `endTime` 使用 `Date.now()`，是 Unix 毫秒时间戳。这两种时间不能直接混算。
+## 2. 模块职责与生命周期
 
-## 3. FP：首次绘制
+| 文件 | 职责 | 模块级状态 | 产出 |
+| --- | --- | --- | --- |
+| `src/performance/index.ts` | 定义报告联合类型并启动所有采集器 | 无 | 转发全部七种子类型 |
+| `observePaint.ts` | 读取原生 First Paint 条目 | 无；每次调用创建一个观察器 | `first-paint` |
+| `observeFCP.ts` | 适配 `web-vitals` FCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `first-contentful-paint` |
+| `observeLCP.ts` | 适配 `web-vitals` LCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `largest-contentful-paint` |
+| `observeLoad.ts` | 测量文档加载完成 | 无；每次加载前调用添加一个一次性监听器 | `load` |
+| `observeResources.ts` | 获取一次缓冲的首屏加载资源快照 | 无；每次调用创建监听器或观察器 | `resource` |
+| `observeFetch.ts` | 包装当前 `window.fetch` | 被观察的所有者、原始 / 包装后的函数、最新回调 | `fetch` |
+| `observeXHR.ts` | 包装 `XMLHttpRequest.prototype.open/send` | 被观察的原型、原始 / 包装后的方法、最新回调 | `xhr` |
 
-入口：`observePaint(onReport?)`。代码通过 `PerformanceObserver.observe({ type: "paint", buffered: true })` 读取 paint 条目。
+这些状态属于一个已加载的 SDK 模块实例。加载两份相互独立的 SDK 副本会创建两套观察器和包装器。
 
-处理步骤：
+### 2.1 聚合注册链
 
-1. 检查 `PerformanceObserver` 是否存在，避免旧浏览器或 SSR 执行失败。
-2. 使用 `buffered: true`，因为调用观察器前 FP 可能已经发生。
-3. 遍历条目，只接受 `entry.name === "first-paint"`。
-4. 找到后断开观察器。FP 每个页面只采集一次。
-5. 从原生 `PerformancePaintTiming` 读取 `startTime` 和 `duration`，补充 `type`、`subType`、`pageUrl`。
-6. 通过 `dispatchReport` 交给网络批处理、本地订阅和本次回调。
+`observePerformance(options)` 按以下顺序同步注册采集器：
 
-返回值：`void`。数据通过回调/统一上报产生，不从函数返回。
+```text
+monitor.performance(options)
+  -> observePerformance(options)
+       -> observePaint(options.onReport)
+       -> observeFCP(options.onReport)
+       -> observeLCP(options.onReport)
+       -> observeLoad(options.onReport)
+       -> observeResources(options.onReport)
+       -> observeFetch(options.onReport)
+       -> observeXHR(options.onReport)
+```
+
+这是注册顺序，而非报告到达顺序。缓冲的时间线条目可能会在注册后很快送达，load 和资源数据等待文档生命周期状态，LCP 等待最终确定，网络报告则等待请求完成。
+
+### 2.2 重复启动与停止
+
+除非有意重复进行文档级观察，否则应在应用启动期间只调用一次聚合入口：
+
+- 每次调用 `observePaint()`、`observeFCP()` 或 `observeLCP()` 都会创建另一项观察器注册；
+- 每次在加载前调用 `observeLoad()` 或 `observeResources()` 都会添加另一个一次性 `load` 监听器；在加载后调用会创建另一个计划执行的测量或资源观察器；
+- 当其包装器仍已安装时，再次调用 `observeFetch()` 不会再次包装；它会替换当前采集器专用回调；
+- 当两个 SDK 原型包装器仍已安装时，`observeXHR()` 的行为相同；
+- `stopObserveFetch()` 和 `stopObserveXHR()` 只恢复仍等于 SDK 包装器的方法，因此不会覆盖后来由其他工具安装的包装器；
+- 停止包装器只影响未来发起的调用，不会取消已经发出但尚未完成的 Fetch 或 XHR。既有闭包 / 监听器仍可通过共享分发器发送完成报告，但已清除的采集器专用回调不会再被调用。
+
+停止任一网络采集器不会发送或清空共享报告队列、取消订阅全局监听器、重置 `init()` 配置，也不会停止任何其他监控模块。
+
+## 3. 采集器概览
+
+| 采集器 / `subType` | 浏览器来源 | 报告触发时机与数量 | 时间域 | 读取 `pageUrl` 的时机 | 生命周期 / 停止边界 |
+| --- | --- | --- | --- | --- | --- |
+| FP / `first-paint` | 原始 Paint Timing | 首个匹配的缓冲 FP 条目；通常每次注册一次 | 页面 performance 时间原点 | 观察器回调 | 匹配后断开；无停止 API |
+| FCP / `first-contentful-paint` | `web-vitals` `onFCP` | 最终确定的 FCP；BFCache 恢复可创建另一项指标 | 页面相对时间，经 `web-vitals` 调整 | 指标回调 | 由 `web-vitals` 管理；无 SDK 停止 API |
+| LCP / `largest-contentful-paint` | `web-vitals` `onLCP` | 最终确定的 LCP；BFCache 恢复可创建另一项指标 | 页面相对时间，经 `web-vitals` 调整 | 指标回调 | 由 `web-vitals` 管理；无 SDK 停止 API |
+| Load / `load` | Navigation Timing 和 `load` 事件 | 每次具有可用时序数据的注册一次 | 导航相对毫秒数 | 下一动画帧 | 一次性；无停止 API |
+| Resource / `resource` | Resource Timing | 首个已送达缓冲列表中每个条目一条报告 | 页面 performance 时间原点 | 观察器回调 | 首次加载快照后断开；无停止 API |
+| Fetch / `fetch` | `window.fetch` 包装器 | 每个被包装 Promise 成功兑现或拒绝时一次 | `Date.now()` 返回的 Unix 毫秒 | 请求完成时 | 长生命周期包装器；显式停止 |
+| XHR / `xhr` | XHR 原型包装器 | 每次被包装的 send 在 `loadend` 时一次 | `Date.now()` 返回的 Unix 毫秒 | `loadend` 时 | 长生命周期包装器；显式停止 |
+
+不要把不同时间域中的值当作共享同一原点来相减或排序。特别是，FP / resource / Web Vitals 值不是 Unix 时间戳，而 Fetch / XHR 的 `startTime` 和 `endTime` 是。
+
+## 4. 共享报告管道
+
+每个采集器构造其子类型专属对象，并调用同一个 `dispatchReport()` 函数：
+
+```text
+浏览器 API 或被包装的请求
+  -> 采集器规范化 PerformanceReportData 对象
+  -> dispatchReport(report, collectorOnReport)
+       -> lazyReportBatch(report)
+            -> 共享内存缓存（报告的克隆）
+            -> 达到 batchSize / pagehide / document hidden / 显式 flush
+            -> createEnvelope(batch)
+            -> Image，或 Beacon 并回退至原始 XHR
+       -> notifyReportListeners(report)       // 全局 subscribe()，一次一条报告
+       -> collectorOnReport(report)           // 仅本次采集器注册
+  -> 已配置 URL（仓库服务端推荐 /api/v1/reportData）
+       -> envelope 结构校验
+       -> SQLite envelope ID 去重与规范化事件存储
+       -> 基于 SQLite 的性能指标 / 请求 / 资源查询
+       -> 监控平台
+```
+
+### 4.1 分发顺序与隔离
+
+对于一条报告，`dispatchReport()` 严格按以下顺序运行：
+
+1. 尝试将报告添加到网络批次；
+2. 通知 SDK 全局 `subscribe()` 监听器；
+3. 调用采集器专用的 `onReport` 回调。
+
+每条路径的异常相互隔离。一旦报告进入 `dispatchReport()`，传输或回调异常都不会阻止其他路径运行，也不会传播到应用代码。采集器进入 `dispatchReport()` 前执行的调用（例如原始 `PerformanceObserver.observe()`）不在此保证范围内。
+
+缓存会在本地回调接收原始对象前保存克隆。因此订阅者的修改不会重写排队的副本，但会影响后续订阅者和采集器回调，因为这些本地消费者会依次收到同一个原始对象。
+
+### 4.2 队列与 flush 行为
+
+Performance、Behavior、Error 以及普通 Replay 相关报告共用一个模块级内存队列。
+
+- 当 `url` 为空时，`lazyReportBatch()` 不会将报告入队。全局订阅者和 `onReport` 仍会收到它。
+- 默认 `batchSize` 为 `5`；运行时批处理将配置的 `0` 视为单条阈值。
+- 当页面触发 `pagehide`、可见性变为 `hidden`，或应用代码调用 `flushReportQueue()` 时，会尝试发送不完整批次。
+- Replay 使用的 `dispatchReportBatch()` 共享该缓存，并会在加入当前数据块后执行 flush，因此也可能一并发送此前未满阈值的普通批次。
+- 没有定时器周期性 flush。不完整批次可能一直留在内存中，直至达到阈值、发生生命周期事件、显式 flush 或报告批次 flush。
+- 队列不持久化。崩溃或页面终止可能丢失没有被任何传输方式接受的报告。
+- 序列化失败、没有可用传输方式或传输立即拒绝会保留队列。一旦 Image 赋值、XHR 调度或 Beacon 接受返回 `true`，队列就会被清空；后续网络或服务端失败不能恢复它。因此，不可序列化值可能会阻塞后续 flush，直到坏数据被移除或队列被内部清除。
+
+### 4.3 Envelope 时间、传输与自观察
+
+`createEnvelope()` 在批次 flush 时而非每一项采集时读取配置和环境。因此：
+
+- 一个批次中的所有事件共享 envelope 的 `timestamp`；
+- `environment.url` 是 flush 时的 URL；
+- SPA 导航后，一条报告自身的 `pageUrl` 可以不同于 envelope URL；
+- 在采集与 flush 之间发生的配置变更会影响最终 envelope。
+
+当 `isImageUpload` 为 true 时，SDK 将编码后的 JSON 放入 Image 查询参数。否则，它尝试 `navigator.sendBeacon()`，并在 Beacon 不可用、抛出异常或返回 `false` 时回退到 XHR。
+
+上报模块在首次加载时捕获当时的 XHR `open` 和 `send` 方法。上传使用这些捕获的方法而非后续性能包装器，避免 SDK XHR 上传递归上报自身。Fetch 不用作上传传输方式。资源采集器也会在后续上传资源条目被观察到前断开。
+
+传输返回 `true` 仅表示浏览器接受了 Beacon 调用、已调度 XHR 任务或已设置 Image `src`。这不是服务端收到或持久化 envelope 的确认。
+
+## 5. FP：`observePaint()`
+
+### 5.1 实现与调用链
+
+```text
+observePaint(onReport?)
+  -> 要求存在 PerformanceObserver
+  -> observe({ type: "paint", buffered: true })
+  -> 遍历已送达条目
+  -> 忽略 name 不为 "first-paint" 的条目
+  -> 首个匹配条目后断开
+  -> 复制原生时序字段和当前 pageUrl
+  -> dispatchReport(report, onReport)
+```
+
+由于 First Paint 可能早于应用代码初始化 SDK，`buffered: true` 是必需的。如果已送达列表不含匹配 FP，观察器将保持连接，仅在匹配后断开。
+
+### 5.2 报告契约
 
 ```ts
 interface FirstPaintReportData {
   name: "first-paint";
   entryType: "paint";
-  startTime: number; // 页面时间原点后的毫秒数
-  duration: number;  // 通常为 0
+  startTime: number; // 页面 performance 时间原点后的毫秒数
+  duration: number;  // 对 paint 条目通常为 0
   type: "performance";
   subType: "first-paint";
+  pageUrl: string;   // 观察器回调处理 FP 时读取
+}
+```
+
+FP 表示浏览器已开始绘制某些内容。它不保证文本、图像或其他有意义内容可见；FCP 提供面向内容的该含义。
+
+### 5.3 设计与边界
+
+SDK 直接使用原生条目，因为 FP 不需要候选项聚合或评级算法。它仅检查 `PerformanceObserver` 是否存在。它不检查 `PerformanceObserver.supportedEntryTypes`，也不捕获构造器 / `observe()` 失败，因此暴露构造器但拒绝 `paint` 类型的部分浏览器实现可能在注册期间抛出异常。
+
+## 6. FCP：`observeFCP()`
+
+### 6.1 实现与调用链
+
+```text
+observeFCP(onReport?)
+  -> 要求存在 window、document 和 PerformanceObserver
+  -> web-vitals onFCP(metric)
+  -> 保留完整 FCPMetric
+  -> 添加 type、subType 和回调时的 pageUrl
+  -> dispatchReport(report, onReport)
+```
+
+SDK 将 FCP 委托给已安装的 `web-vitals` 6.2.2 依赖，而不是重新实现可见性、预渲染、导航、BFCache、delta 和评级逻辑。它以默认选项调用 `onFCP()`。
+
+### 6.2 报告契约
+
+SDK 类型扩展依赖类型，而不重新定义其字段：
+
+```ts
+interface FirstContentfulPaintReportData extends FCPMetric {
+  type: "performance";
+  subType: "first-contentful-paint";
   pageUrl: string;
 }
 ```
 
-FP 是“浏览器第一次开始绘制”，不保证已经出现用户能识别的文字或图片；需要内容绘制语义时使用 FCP。
+已安装的 `FCPMetric` 提供 `name: "FCP"`、`value`、`delta`、`rating`、`entries: PerformancePaintTiming[]`、`id`、导航类型联合和数值型 `navigationId`，以及可选导航元数据。采集器在添加 SDK 字段前展开完整指标，因此依赖类型在演进时仍是事实来源。
 
-## 4. FCP：首次内容绘制
+对于已安装依赖，FCP 在不超过 1800 ms 时评级为 `good`，高于 1800 ms 且不超过 3000 ms 时为 `needs-improvement`，高于 3000 ms 时为 `poor`。SDK 不计算或配置这些阈值。
 
-入口：`observeFCP(onReport?)`。实现调用 `web-vitals` 的 `onFCP`，而不是手动拼接 `PerformanceObserver` 结果。
+### 6.3 设计与边界
 
-步骤：
+`web-vitals` 观察缓冲的 paint 条目，筛选在页面首次隐藏时间或之后的 FCP，按 `activationStart` 调整预渲染页面，并可在 BFCache 恢复后创建另一项指标。它也会检测支持的条目类型并在内部捕获观察器失败。
 
-1. 检查浏览器环境和 `PerformanceObserver`。
-2. 让 `web-vitals` 处理候选条目、页面生命周期和无效场景。
-3. 回调收到 `FCPMetric` 后，保留指标对象全部字段。
-4. 增加 `type: "performance"`、`subType: "first-contentful-paint"` 和 `pageUrl`。
-5. 分发数据。
+SDK 不传递 `reportSoftNavs: true`；FCP 以文档导航为作用域，不会因普通 SPA 路由重置。`pageUrl` 在依赖回调运行时读取，因此它可能反映底层 paint 条目发生时之后的路由。
 
-`FCPMetric` 的核心结构来自当前安装的 `web-vitals` 版本：
+## 7. LCP：`observeLCP()`
+
+### 7.1 实现与调用链
+
+```text
+observeLCP(onReport?)
+  -> 要求存在 window、document 和 PerformanceObserver
+  -> web-vitals onLCP(metric)
+       -> 跟踪 LCP 候选项
+       -> 按依赖的生命周期规则最终确定
+  -> 保留完整 LCPMetric
+  -> 添加 type、subType 和回调时的 pageUrl
+  -> dispatchReport(report, onReport)
+```
+
+随着更大内容被渲染，LCP 可能发生变化。委托给 `web-vitals` 可避免此 SDK 维护候选项选择、隐藏页排除、交互最终确定、预渲染调整、BFCache 处理、评级和浏览器专用观察细节。
+
+### 7.2 报告契约
+
+`LargestContentfulPaintReportData` 扩展 `LCPMetric` 并添加：
 
 ```ts
 {
-  name: "FCP",
-  value: number,
-  delta: number,
-  rating: "good" | "needs-improvement" | "poor",
-  entries: PerformanceEntry[],
-  id: string,
-  navigationType: string,
-  type: "performance",
-  subType: "first-contentful-paint",
-  pageUrl: string
+  type: "performance";
+  subType: "largest-contentful-paint";
+  pageUrl: string;
 }
 ```
 
-`value` 是当前指标值，`delta` 是本次回调相对上次报告的变化量，`rating` 是 Web Vitals 评级，`entries` 是关联原始性能条目，`id` 用于关联同一指标实例，`navigationType` 表示导航类型。SDK 不修改这些字段。
+由依赖持有的字段包括 `LCP` 名称、`value`、`delta`、`rating`、`entries`、`id`、导航元数据，以及已安装 `LCPMetric` 类型中的任何其他字段。最新候选项通常体现在 `entries` 中；不得假定浏览器提供候选元素 / 资源详情。
 
-## 5. LCP：最大内容绘制
+对于已安装依赖，LCP 在不超过 2500 ms 时评级为 `good`，高于 2500 ms 且不超过 4000 ms 时为 `needs-improvement`，高于 4000 ms 时为 `poor`。
 
-入口：`observeLCP(onReport?)`，使用 `web-vitals` 的 `onLCP`。
+### 7.3 设计与边界
 
-LCP 会在加载过程中出现多个候选元素，因此步骤不是“看到第一条就上报”：
+在默认 `web-vitals` 行为下，候选项变化不会逐一发送给此采集器。LCP 会在可信首次交互或页面隐藏前后最终确定，并在可用时使用空闲回调。首次隐藏时间后的候选项会被排除。BFCache 恢复可创建另一项 LCP 指标。
 
-1. 注册 Web Vitals LCP 观察器。
-2. 持续比较候选元素。
-3. 在首次用户交互、页面隐藏等规范定义的确认时机得到最终候选值。
-4. 接收 `LCPMetric`，增加统一分类和页面 URL。
-5. 分发最终报告。
+与 FCP 一样，未启用实验性软导航上报。客户端路由变更不会启动新的 SDK LCP 测量，回调时的 `pageUrl` 可能不同于候选项绘制所在的路由。
 
-报告结构与 FCPMetric 相同，但 `name` 通常为 `"LCP"`，`subType` 为 `"largest-contentful-paint"`。`entries` 中可能包含对应的 `LargestContentfulPaint`，其元素、资源 URL 和绘制时间由浏览器提供；不要假设这些字段在所有浏览器都存在。
+## 8. 页面加载：`observeLoad()`
 
-## 6. Load：页面 load 完成耗时
+### 8.1 实现与调用链
 
-入口：`observeLoad(onReport?)`。
+```text
+observeLoad(onReport?)
+  -> 要求存在 window、document、performance 和 requestAnimationFrame
+  -> document.readyState === "complete"
+       -> 立即调度 reportLoad()
+       -> 否则添加一个 load 监听器，保留 event.timeStamp，随后移除
+  -> 下一动画帧
+  -> navigation = performance.getEntriesByType("navigation")[0]
+  -> navigation.loadEventEnd > 0
+       ? navigation.loadEventEnd - navigation.startTime
+       : load event timeStamp
+  -> 仅在存在 duration 时分发
+```
 
-步骤：
+下一动画帧延迟是有意为之：`load` 处理器运行期间，`PerformanceNavigationTiming.loadEventEnd` 可能仍为零，因为事件尚未结束。
 
-1. 检查 `window`、`document`、`performance` 和 `requestAnimationFrame`。
-2. 若 `document.readyState === "complete"`，立即安排一次下一帧读取。
-3. 否则注册一次 `load` 监听，触发后移除监听器。
-4. 下一帧读取 `performance.getEntriesByType("navigation")[0]`。
-5. 优先计算 `loadEventEnd - startTime`；若没有可用 Navigation Timing，则使用 load 事件的 `timeStamp`。
-6. 生成并分发报告。
-
-延迟一帧是因为 `load` 处理函数执行时 `loadEventEnd` 可能还没有最终写入。
+### 8.2 报告契约
 
 ```ts
 interface LoadReportData {
   type: "performance";
   subType: "load";
-  duration: number; // 导航开始到 loadEventEnd，毫秒
-  pageUrl: string;
+  duration: number;
+  pageUrl: string; // 在计划的动画帧回调中读取
 }
 ```
 
-若既没有有效 Navigation Timing，又无法取得事件时间戳，则不报告。函数返回 `void`。
+`duration` 是导航相对毫秒数。首选值为 `loadEventEnd - startTime`；加载前注册路径可回退到 load 事件的相对 `timeStamp`。
 
-## 7. Resource：首轮资源加载
+### 8.3 设计与边界
 
-入口：`observeResources(onReport?)`。它只采集页面首轮资源，不持续监听后续所有资源。
+如果文档已完成且没有可用的 Navigation Timing 条目，则没有保留的 load 事件时间戳，也不会产生报告。重复调用会创建重复的计划测量或监听器。该函数不暴露取消句柄，且此文档级指标不会在 SPA 路由变化时重置。
 
-步骤：
+## 9. 首次加载资源：`observeResources()`
 
-1. 检查浏览器环境和 `PerformanceObserver`。
-2. 页面已完成时立即注册观察器；否则等待一次 `load` 并移除该监听。
-3. 用 `buffered: true` 读取此前已经进入时间线的资源条目。
-4. 每条 `PerformanceResourceTiming` 转换为一条报告。
-5. 当前列表处理完后断开观察器，避免将未来的 SDK 上报请求再次作为资源采集。
+### 9.1 实现与调用链
+
+```text
+observeResources(onReport?)
+  -> 要求存在 window、document 和 PerformanceObserver
+  -> 除非文档已完成，否则等待 load
+  -> observe({ type: "resource", buffered: true })
+  -> 对首个已送达列表中的每个资源条目
+       -> 派生网络阶段和大小
+       -> dispatchReport(report, onReport)
+  -> 该列表后断开
+```
+
+等待 load 使其成为一次首次加载快照。`buffered: true` 可取得在安装观察器前创建的条目。首次回调后断开是有意为之，既避免持续资源监控，也防止此观察器采集后续 SDK 上传流量。
+
+### 9.2 报告契约与字段派生
 
 ```ts
 interface ResourceLoadReportData {
   name: string;               // resourceEntry.name
   type: "performance";
   subType: "resource";
-  sourceType: string;         // initiatorType，如 script/img/fetch
+  sourceType: string;         // initiatorType
   duration: number;
   dns: number;                // domainLookupEnd - domainLookupStart
   tcp: number;                // connectEnd - connectStart
   redirect: number;           // redirectEnd - redirectStart
   ttfb: number;               // responseStart - requestStart
   protocol: string;           // nextHopProtocol
-  responseBodySize: number;   // encodedBodySize，压缩后字节数
+  responseBodySize: number;   // encodedBodySize
   responseHeaderSize: number; // transferSize - encodedBodySize
-  transferSize: number;       // 传输总字节数
-  resourceSize: number;       // decodedBodySize，解压后字节数
-  startTime: number;           // 页面时间原点后的毫秒数
-  pageUrl: string;
+  transferSize: number;
+  resourceSize: number;       // decodedBodySize
+  startTime: number;          // 页面 performance 时间原点
+  pageUrl: string;            // 处理观察器列表时读取
 }
 ```
 
-跨域资源可能受到 Timing-Allow-Origin 限制，浏览器会把部分时间和大小置为 0；这是浏览器权限结果，不是 SDK 计算错误。`responseHeaderSize` 是代码用总传输量减响应体传输量得到的估算值，不能当作精确 HTTP 头大小。
+没有派生字段会被截断。`responseHeaderSize` 是算术估算，而非 HTTP 头的精确测量；缓存和浏览器行为可能使其为零，或使其不适合用于协议核算。
 
-## 8. Fetch：Fetch 请求
+### 9.3 设计与边界
 
-入口：`observeFetch(onReport?)`。SDK 保存原始 `window.fetch`，用异步包装函数替换它。
+跨源 Resource Timing 详情由 `Timing-Allow-Origin` 控制。没有许可时，浏览器可暴露资源，但将时序和大小字段置零。这些零值会作为浏览器提供的数据被保留。
 
-一次请求的步骤：
+与原始 FP 类似，此采集器检查 `PerformanceObserver`，但不测试对 `resource` 条目类型的支持，也不捕获观察器注册失败。它不是持续观察器：首次回调后加载的资源不在其范围内。
 
-1. 记录 `Date.now()` 作为开始时间。
-2. 从 `input` 和 `init` 提取 URL 与方法。`init.method` 优先，其次是 `Request.method`，再否则为 `GET`；方法统一转大写。
-3. 调用原始 fetch，并保留原始 `this` 和所有参数。
-4. 成功得到 Response 时记录结束时间、状态码和 `response.ok`。
-5. 网络异常时记录状态码 `0`、`success: false`，然后重新抛出原异常，不改变业务 Promise 行为。
+一次 Fetch 或 XHR 也可能创建 Resource Timing 条目。SDK 不会将该资源视图与其 Fetch / XHR 包装器报告去重，因为它们承载不同的时序和大小语义。
+
+## 10. Fetch：`observeFetch()`
+
+### 10.1 安装与请求调用链
+
+```text
+observeFetch(onReport?)
+  -> 要求 window.fetch 可调用
+  -> 当前是同一 SDK 包装器？
+       -> 仅替换最新回调
+       -> 否则停止之前的所有权并包装当前 fetch
+
+wrapped fetch(input, init)
+  -> startTime = Date.now()
+  -> method = init.method ?? Request.method ?? "GET"，然后转为大写
+  -> url = Request.url 或 String(input)
+  -> Reflect.apply(originalFetch, original this, original arguments)
+  -> resolve：使用 response.status 和 response.ok，然后返回同一 Response
+  -> reject：使用 status 0 和 success false，然后抛出同一错误
+  -> pageUrl 在结算时读取
+```
+
+`Reflect.apply()` 保留接收者和参数列表。等待原始 Promise 可产生一条完成报告，同时返回完全相同的原始 `Response`，或重新抛出完全相同的原始拒绝。因此，监控不会将 HTTP 失败转换为 Promise 拒绝，也不会吞掉网络失败。
+
+### 10.2 报告契约
 
 ```ts
 interface FetchReportData {
-  status: number;       // 响应状态码；网络异常为 0
+  status: number;       // 响应状态；拒绝时为 0
   duration: number;     // endTime - startTime
-  startTime: number;    // Date.now()，Unix 毫秒
-  endTime: number;      // Date.now()，Unix 毫秒
+  startTime: number;    // Date.now() 返回的 Unix 毫秒
+  endTime: number;      // Date.now() 返回的 Unix 毫秒
   url: string;
   method: string;       // 大写
   type: "performance";
   subType: "fetch";
-  success: boolean;     // response.ok；异常为 false
-  pageUrl: string;
+  success: boolean;     // response.ok，或拒绝时为 false
+  pageUrl: string;      // Promise 结算时读取
 }
 ```
 
-HTTP 404/500 仍然是“成功完成的 Fetch”，因为 Promise 已得到 Response；这时 `success` 由 `response.ok` 判断。网络层抛错才是状态码 0。
+HTTP 404 或 500 通常会 resolve 为一个 `Response`；它会带其状态和 `success: response.ok` 被上报。只有拒绝会被规范化为状态 `0`。
 
-停止时只有 `window.fetch` 仍等于 SDK 的包装函数，才恢复原始函数；若其他工具在期间再次替换了 fetch，SDK 不覆盖它。
+### 10.3 所有权与停止边界
 
-## 9. XHR：XMLHttpRequest 请求
+`stopObserveFetch()` 仅在 `window.fetch` 仍等于 SDK 包装器时恢复捕获的函数。如果另一个库后来替换了 Fetch，SDK 会保持该替换不变，并清除自身引用。
 
-入口：`observeXHR(onReport?)`。实现包装 `XMLHttpRequest.prototype.open` 和 `send`，因此 axios 等使用 XHR 的库也会被采集。
+已经发出但尚未完成的被包装请求会在停止后保留其闭包。请求结束时仍会进入 `dispatchReport()`，因此仍可进入网络队列和全局订阅。由于模块回调已被清除，旧的细粒度或聚合 `onReport` 回调不会被调用。
 
-步骤：
+请求元数据提取发生在包装器的 `try` 块之前。因此，诸如抛出异常的 `String(input)` 等转换异常不会被转换为性能报告。
 
-1. `open` 包装器保存每个 XHR 实例的 method 和 URL。
-2. `send` 包装器记录 `Date.now()`，注册一次 `loadend`。
-3. 调用原始 `send`；若同步抛错，清理本次监听并重新抛出。
-4. `loadend` 触发时只处理一次，读取 `status`，计算耗时，移除监听并清理元数据。
-5. `status >= 200 && status < 300` 时 `success` 为 true，其余状态为 false。
+## 11. XHR：`observeXHR()`
+
+### 11.1 安装与请求调用链
+
+```text
+observeXHR(onReport?)
+  -> 要求存在 XMLHttpRequest
+  -> 当前是同一 SDK open / send 包装器？
+       -> 仅替换最新回调
+       -> 否则停止之前的所有权并包装当前原型方法
+
+open wrapper
+  -> 在 WeakMap<XMLHttpRequest, metadata> 中存储 method 和 URL
+  -> Reflect.apply(originalOpen, this, arguments)
+
+send wrapper
+  -> startTime = Date.now()
+  -> 附加捕获阶段 loadend 监听器
+  -> Reflect.apply(originalSend, this, arguments)
+       -> 同步抛出：移除监听器 / 元数据并重新抛出
+  -> loadend：防止重复完成
+       -> 读取 status 和 metadata
+       -> 移除监听器和 WeakMap 条目
+       -> dispatchReport(report, latest callback)
+```
+
+包装 XHR 原型可捕获直接 XHR 使用，以及使用浏览器 XHR adapter 的 Axios 等库。`WeakMap` 将请求元数据置于业务可见的实例属性之外，并允许已完成对象被回收。
+
+### 11.2 报告契约
 
 ```ts
 interface XHRReportData {
   status: number;
   duration: number;
-  startTime: number; // Date.now()，Unix 毫秒
+  startTime: number; // Date.now() 返回的 Unix 毫秒
   endTime: number;
-  url: string;
+  url: string;       // 最初传给 open() 的 URL，而非最终 responseURL
   method: string;    // 大写
   type: "performance";
   subType: "xhr";
-  success: boolean;  // 仅 2xx 为 true
-  pageUrl: string;
+  success: boolean;  // 仅当 200 <= status < 300 时为 true
+  pageUrl: string;   // 在 loadend 时读取；仅当此时 window 不可用时为空
 }
 ```
 
-Fetch 使用 `response.ok`，XHR 使用 2xx 区间，这是两种 API 的原生成功语义差异。
+`loadend` 覆盖成功响应、HTTP 失败、中止、超时和网络失败。后几种情况通常具有状态 `0` 且不成功。XHR 使用严格的 2xx 规则，而 Fetch 使用 `response.ok`；实现明确保留每个浏览器 API 选择的成功表示。
 
-## 10. `web-vitals` 与原生 Performance API
+### 11.3 所有权与停止边界
 
-FP、load、resource 需要的是浏览器直接给出的原始条目，因此 SDK 直接读取 Performance API。FCP 和 LCP 需要候选值、页面隐藏、首次交互和评级等规范逻辑，SDK 委托 `web-vitals`。因此 FCP/LCP 报告字段比 FP 多，且其最终回调时间不一定等于原始条目产生时间。
+`stopObserveXHR()` 独立恢复 `open` 和 `send`，且仅当每个方法仍等于对应 SDK 包装器时恢复。它绝不会覆盖后来的第三方替换。
+
+已有 `loadend` 闭包附加的 XHR 在停止后仍可通过共享分发器上报，而被清除的采集器回调会被省略。同步调用 `send()` 且收到抛出时不会产生报告，因为监听器和元数据会在原始异常被重新抛出前清理。
+
+实现假定正常 XHR 使用方式。以异常方式复用同一个 XHR 实例，或发出多次无效 send，并非单独支持的生命周期模型。
+
+## 12. 如何解读数据
+
+### 12.1 时间与页面归属
+
+| 值 | 采集点 | 含义 |
+| --- | --- | --- |
+| FP `startTime` | 原生 paint 条目 | 页面 performance 时间原点后的毫秒数 |
+| FCP / LCP `value` | 依赖指标 | 按 `web-vitals` 生命周期规则调整后的导航相对值 |
+| Load `duration` | load 后的下一帧 | 导航相对时长 |
+| Resource `startTime` / `duration` | Resource Timing 条目 | 页面相对请求时序 |
+| Fetch / XHR `startTime` / `endTime` | 请求开始 / 完成 | `Date.now()` 返回的 Unix 毫秒 |
+| 报告 `pageUrl` | 采集器回调或请求完成 | 该较晚时点的当前 URL |
+| envelope `timestamp` / `environment.url` | 批次 flush | 绝对发送尝试时间和 URL |
+
+请求可在路由 A 开始，在路由 B 完成；其 Fetch / XHR 报告归属到路由 B。较晚的 Web Vitals 回调也可能产生相同漂移。该模块不修补 History、不监听路由，也不会为 SPA 导航重置文档指标。应使用 Behavior 模块获取路由 / PV 信号，且不要从这些文档级采集器推断每路由 Core Web Vitals。
+
+### 12.2 重叠视图并不天然是重复数据
+
+一次操作可能表现为：
+
+- 包含浏览器网络阶段和传输大小的 `resource` 报告；以及
+- 包含应用 API、挂钟完成时间、状态和成功结果的 `fetch` 或 `xhr` 报告。
+
+没有客户端跨采集器去重。消费者应当分别分析这些数据集，或定义自己的关联规则；简单地将三者的计数相加会夸大请求量。
+
+### 12.3 数据与兼容性边界
+
+- 完整页面和请求 URL 会被保留，不会自动脱敏 query / hash。应用必须避免敏感 URL 数据，或在启动监控前对其进行清理。
+- FCP / LCP 本地回调接收完整依赖指标对象。原生 `PerformanceEntry` 子类可能包含不可枚举或浏览器专有属性，因此消费者应优先依赖文档列出的标量字段；若要使用 `entries` 的更多字段，应先在目标浏览器中验证其 JSON 序列化结果。
+- 不同采集器的能力检查不同。FCP / LCP 受益于 `web-vitals` 特性检测；原始 FP / resource 注册具有上文所述的部分支持异常。
+- 仓库中没有浏览器版本矩阵。ES2022 目标和模拟 API 测试不能建立精确的 Chrome、Firefox 或 Safari 支持情况。
+- 采集、传输接受、服务端摄取和持久化存储是独立阶段。本地回调仅证明采集已到达分发。
+
+## 13. 服务端与看板解读
+
+推荐的 `/api/v1/reportData` 端点要求对象具有 `data` 数组和非空 `appId`；当存在 `protocolVersion` 时，其必须为 `1`，且服务端还会校验带版本的 session、timestamp、release、user 和 environment 字段。这是结构校验而非穷尽的子类型校验，端点本身不校验 envelope `id`。
+
+当仓库服务端使用 `SQLiteReportStore` 时，它按 envelope ID 去重，并将每条报告存为规范化事件及其原始 JSON。去重仅在 envelope 级别：不同 envelope 中等价的报告会被保留并独立计数。内存存储不提供该去重或下文描述的性能查询端点。
+
+基于 SQLite 的性能查询层将数据分为三组：
+
+| 查询组 | 包含的子类型 | 使用的值 |
+| --- | --- | --- |
+| 指标摘要 | `first-paint`、`first-contentful-paint`、`largest-contentful-paint`、`load` | FP `startTime`、FCP / LCP `value`、load `duration` |
+| 请求列表 | `fetch`、`xhr` | 时长、状态、方法、URL、成功结果等请求字段 |
+| 资源列表 | `resource` | 时长、发起方类型、URL、传输和解码后大小 |
+
+指标摘要拒绝非有限值和负值。它们通过线性插值计算 P50 / P75 / P95，但在样本少于两条时有意返回 `null` 分位数。趋势桶使用从 envelope 继承的规范化事件时间戳，因此批量事件按 flush 时间绘制，而非其页面相对指标时间或请求开始时间。
+
+性能查询规范化在存在时优先使用报告自身的 `pageUrl`，而非 envelope URL。看板分别请求指标摘要、网络请求和资源；它不会将资源和包装器观察合并为一个请求模型。
+
+端点 schema、筛选器、分页、SQLite 布局、保留和运行行为见 [服务端文档](server.md)。
+
+## 14. 验证证据与缺口
+
+| 范围 | 主要证据 |
+| --- | --- |
+| 聚合顺序与回调转发 | `test/performanceIndex.test.ts` |
+| FP、FCP、LCP、load 和 resources | `test/observePaint.test.ts`、`test/observeFCP.test.ts`、`test/observeLCP.test.ts`、`test/observeLoad.test.ts`、`test/observeResources.test.ts` |
+| Fetch 和 XHR 行为、重复注册与基本恢复 | `test/observeFetch.test.ts`、`test/observeXHR.test.ts` |
+| 统一采集器分发 | `test/unifiedReport.test.ts` |
+| 批处理、传输选择和原始 XHR 上传 | `test/report.test.ts`、`test/reportXHR.test.ts` |
+| 服务端分位数、趋势、筛选和列表响应 | `test/performance.test.ts` |
+| HTTP 从摄取到查询的流程 | `test/operationalE2E.test.ts` |
+
+采集器测试使用带有模拟浏览器 API 的 Vitest；它们不是真实浏览器 Performance Timeline 测试。运行 E2E 使用报告形状的数据验证服务端摄取和查询，而不是原生 FP / FCP / LCP / resource 观察。
+
+因此，当前自动化覆盖并未证明：
+
+- 精确的浏览器版本兼容性；
+- 部分支持浏览器中的原始观察器行为；
+- 真实 BFCache FCP / LCP 行为；
+- 跨源 `Timing-Allow-Origin` 结果；
+- 各浏览器中的原生 `PerformanceEntry` JSON 形状；
+- 指标延迟回调或请求尚未完成期间发生路由变化时的归因；
+- 停止后重启或停止后完成的网络包装器行为；
+- 停止时保留第三方包装器替换；
+- 多页请求 / 资源分页行为；
+- 与任意第三方 Fetch / XHR 包装器的完整互操作性。
+
+有关应用设置和框架示例，请继续阅读 [业务使用](business-usage.md)。有关队列克隆、envelope 构造、订阅和传输行为，见 [SDK 入口与内部机制](sdk-internals.md)。
