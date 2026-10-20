@@ -78,13 +78,13 @@
 行为自动 PV（`src/behavior/autoPageView.ts`）会包装 `history.pushState` 和 `history.replaceState`，以便覆盖路由库常用、但不会触发 `popstate` 的导航。包装策略与 Fetch / XHR 一致：
 
 1. 保存原始方法；
-2. 用包装函数替换，先调用原方法，成功返回后再调用 `observePV()`；
+2. 用包装函数替换，先调用原方法，成功返回后再调用 `observePV(..., { startSource: "history" })`；
 3. 不修改参数和返回值；
 4. `stopObserveAutoPageView()` / `stopObserveBehavior()` / `stopObservePageChange()` 仅在当前方法仍等于 SDK 包装函数时还原。
 
-PV 去重状态保存在 `src/behavior/pv.ts` 的模块级变量中。`stopObserveBehavior()` 会调用 `clearPageViewDedup()`，避免停止后再启动时被旧地址挡住首条 PV。
+PV 去重状态保存在 `src/behavior/pv.ts` 的模块级变量中（按脱敏后的 `pageUrl`）。`stopObserveBehavior()` 会调用 `clearPageViewDedup()` 与 `clearNavigationAttempt()`，避免停止后再启动时被旧地址挡住首条 PV，并丢弃未提交的 Navigation Attempt。
 
-`pageChange` 与自动 PV 并行：前者产出 `hashchange` / `popstate` 底层信号，后者统一产出 `subType: "pv"`。模块调用链、设计取舍和 URL 归因边界见 [Behavior 用户行为监控](behavior.md)。停止 Behavior 观察器只清理其监听器、History 包装和 PV 去重状态，不清共享上报队列，也不取消全局订阅。
+`pageChange` 与自动 PV 并行：前者产出 `hashchange` / `popstate` 底层信号，后者统一产出带 `viewId` / `startSource` 的 `subType: "pv"`。框架侧可通过 `navigationAttempt` 在守卫通过后提交更高保真的 Page View。模块调用链、脱敏边界和设计取舍见 [Behavior 用户行为监控](behavior.md)。停止 Behavior 观察器只清理其监听器、History 包装、PV 去重与 Attempt 状态，不清共享上报队列，也不取消全局订阅。
 
 ## 9. 边界规则
 

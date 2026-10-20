@@ -4,11 +4,16 @@
 import { createApp, nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("frontend-moniter-sdk", () => ({
-    getReplaySession: vi.fn(),
-    observeReplay: vi.fn(),
-    stopObserveReplay: vi.fn(),
-}));
+vi.mock("frontend-moniter-sdk", async (importOriginal) => {
+    const actual =
+        await importOriginal<typeof import("frontend-moniter-sdk")>();
+    return {
+        ...actual,
+        getReplaySession: vi.fn(),
+        observeReplay: vi.fn(),
+        stopObserveReplay: vi.fn(),
+    };
+});
 
 import {
     observeBehavior,
@@ -66,6 +71,9 @@ describe("Vue demo click markers", () => {
             "switch-hash-route-to-profile",
             "switch-history-route-to-orders",
             "switch-history-route-to-profile",
+            "commit-navigation-attempt-orders",
+            "cancel-navigation-attempt",
+            "commit-redirect-navigation-orders",
         ]);
 
         const unmarked = [...container.querySelectorAll("button")].find(

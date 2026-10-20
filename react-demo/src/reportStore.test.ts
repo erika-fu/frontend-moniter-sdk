@@ -15,6 +15,8 @@ function createPageView(startTime: number): PageViewReportData {
         pageUrl: `https://example.test/${startTime}`,
         referrer: "",
         uuid: `report-${startTime}`,
+        viewId: `report-${startTime}`,
+        startSource: "manual",
     };
 }
 

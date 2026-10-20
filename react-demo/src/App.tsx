@@ -25,7 +25,13 @@ import {
     useSyncExternalStore,
     type ReactNode,
 } from "react";
-import type { SDKReportData } from "../../src/index.js";
+import {
+    cancelNavigationAttempt,
+    commitNavigationAttempt,
+    markNavigationRedirect,
+    startNavigationAttempt,
+    type SDKReportData,
+} from "../../src/index.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import {
     clearReports,
@@ -98,7 +104,15 @@ const coverageGroups: Array<{
     {
         title: "用户行为",
         icon: MousePointerClick,
-        items: ["PV", "Auto PV", "Click", "Touch", "Hash", "History"],
+        items: [
+            "PV",
+            "Auto PV",
+            "Navigation Attempt",
+            "Click",
+            "Touch",
+            "Hash",
+            "History",
+        ],
     },
     {
         title: "异常监控",
@@ -248,6 +262,40 @@ function TestControls(): ReactNode {
         window.history.pushState({ route }, "", url);
     }
 
+    function commitOrdersNavigation(): void {
+        const pageUrl = new URL(
+            "#/scenario/orders",
+            window.location.href,
+        ).href;
+        startNavigationAttempt();
+        commitNavigationAttempt({
+            pageName: "orders",
+            routePattern: "/scenario/orders",
+            pageUrl,
+        });
+        window.location.hash = "#/scenario/orders";
+    }
+
+    function cancelOrdersNavigation(): void {
+        startNavigationAttempt();
+        cancelNavigationAttempt();
+    }
+
+    function commitRedirectOrdersNavigation(): void {
+        const pageUrl = new URL(
+            "#/scenario/orders?token=secret&id=7",
+            window.location.href,
+        ).href;
+        startNavigationAttempt();
+        markNavigationRedirect();
+        commitNavigationAttempt({
+            pageName: "orders",
+            routePattern: "/scenario/orders",
+            pageUrl,
+        });
+        window.location.hash = "#/scenario/orders";
+    }
+
     function resetBoundary(): void {
         setShouldCrash(false);
         setCrashKey((current) => current + 1);
@@ -261,7 +309,7 @@ function TestControls(): ReactNode {
                     <h2 id="test-title">事件触发器</h2>
                 </div>
                 <span className="section-note">
-                    本示例只演示页面访问和导航，点击不会产生行为上报。Hash / History 切换会自动记 PV
+                    本示例演示页面访问与 Navigation Attempt 公共 API，不采集点击。自动 PV 带 startSource；手动 commit 可附带 pageName / routePattern，取消则不上报。
                 </span>
             </div>
             <div className="action-grid">
@@ -286,6 +334,18 @@ function TestControls(): ReactNode {
                 >
                     <Route aria-hidden="true" />
                     <span>History 个人</span>
+                </button>
+                <button type="button" onClick={commitOrdersNavigation}>
+                    <Route aria-hidden="true" />
+                    <span>提交导航 Attempt</span>
+                </button>
+                <button type="button" onClick={cancelOrdersNavigation}>
+                    <Route aria-hidden="true" />
+                    <span>取消导航 Attempt</span>
+                </button>
+                <button type="button" onClick={commitRedirectOrdersNavigation}>
+                    <Route aria-hidden="true" />
+                    <span>重定向后提交</span>
                 </button>
                 <button type="button" onClick={throwJavaScriptError}>
                     <TerminalSquare aria-hidden="true" />

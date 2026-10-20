@@ -6,6 +6,9 @@ import {
     stopReplayRecording,
 } from "./replayControl";
 import {
+    cancelManualNavigation,
+    commitManualNavigation,
+    commitRedirectNavigation,
     failResource,
     pushHistoryRoute,
     rejectPromise,
@@ -99,7 +102,7 @@ function acknowledgeUnmarkedClick(): void {
                     </div>
                 </div>
                 <p class="section-note">
-                    只有携带 clstag 标记的控件才会产生行为点击上报。未标记对照可以点击，但不会产生点击上报。Hash / History 切换仍会自动记 PV。
+                    只有携带 clstag 标记的控件才会产生行为点击上报。未标记对照可以点击，但不会产生点击上报。Hash / History 切换走自动 PV（较低保真，带 startSource）。手动 Attempt 演示框架在守卫通过后提交 Page View，取消则不上报。敏感 query（如 token）会从 pageUrl 中剥离。
                 </p>
                 <div class="scenario-grid">
                     <button
@@ -129,6 +132,33 @@ function acknowledgeUnmarkedClick(): void {
                         @click="pushHistoryRoute('profile')"
                     >
                         History 切到个人
+                    </button>
+                    <button
+                        type="button"
+                        clstag="commit-navigation-attempt-orders"
+                        @click="
+                            commitManualNavigation(
+                                '#/scenario/orders',
+                                'orders',
+                                '/scenario/orders',
+                            )
+                        "
+                    >
+                        手动提交订单页
+                    </button>
+                    <button
+                        type="button"
+                        clstag="cancel-navigation-attempt"
+                        @click="cancelManualNavigation"
+                    >
+                        取消导航 Attempt
+                    </button>
+                    <button
+                        type="button"
+                        clstag="commit-redirect-navigation-orders"
+                        @click="commitRedirectNavigation"
+                    >
+                        重定向后提交订单页
                     </button>
                     <button type="button" @click="acknowledgeUnmarkedClick">
                         未标记对照

@@ -8,6 +8,9 @@ import {
     type ClickReportData,
 } from "./click.js";
 import {
+    clearNavigationAttempt,
+} from "./navigationAttempt.js";
+import {
     observePageChange,
     stopObservePageChange,
     type PageChangeReportData,
@@ -20,6 +23,7 @@ import {
 
 export * from "./autoPageView.js";
 export * from "./click.js";
+export * from "./navigationAttempt.js";
 export * from "./pageChange.js";
 export * from "./pv.js";
 
@@ -40,7 +44,8 @@ export interface BehaviorMonitoringOptions {
     /**
      * 是否在 URL 变化时自动上报 PV。
      *
-     * 默认开启。设为 false 时只保留启动时的一次 PV，后续由业务调用 `observePV()`。
+     * 默认开启。设为 false 时只保留启动时的一次 PV，后续由业务通过
+     * Navigation Attempt 或 `observePV()` 提交。
      */
     autoPageView?: boolean;
     /**
@@ -71,20 +76,21 @@ export function observeBehavior(
     } else {
         observeAutoPageView(options.onReport);
     }
-    observePV(options.onReport);
+    observePV(options.onReport, { startSource: "initial" });
 }
 
 /**
  * 停止需要长期驻留的行为事件监听器。
  *
- * 会还原 History 包装，并清除 PV 去重缓存，使下次启动能重新记录当前页。
- * `stopObservePageChange()` 也会还原 History 包装。
+ * 会还原 History 包装，清除 PV 去重缓存与进行中的 Navigation Attempt，
+ * 使下次启动能重新记录当前页。`stopObservePageChange()` 也会还原 History 包装。
  */
 export function stopObserveBehavior(): void {
     stopObserveClick();
     stopObservePageChange();
     stopObserveAutoPageView();
     clearPageViewDedup();
+    clearNavigationAttempt();
 }
 
 export default observeBehavior;

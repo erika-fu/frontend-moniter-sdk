@@ -8,7 +8,7 @@ Behavior 只负责采集并把报告交给 SDK 的统一分发器：它不依赖
 
 | `subType` | 含义 | 主要用途 |
 | --- | --- | --- |
-| `pv` | 当前完整 URL 的一次页面访问记录 | 页面访问量、路由访问分析 |
+| `pv` | 一次已展示的 Page View（含 `viewId` 与 View Start） | 页面访问量、路由访问分析、后续 View Paint 关联 |
 | `click` | 最近一个显式标记元素上的语义化点击 | 业务动作分析 |
 | `hashchange` | 浏览器原生 Hash 变化信号 | 导航链路诊断 |
 | `popstate` | 浏览器原生历史记录遍历信号 | 前进/后退链路诊断 |
@@ -49,10 +49,14 @@ monitor.behavior({
 
 ```ts
 import {
+  cancelNavigationAttempt,
+  commitNavigationAttempt,
+  markNavigationRedirect,
   observeAutoPageView,
   observeClick,
   observePageChange,
   observePV,
+  startNavigationAttempt,
   stopObserveAutoPageView,
   stopObserveBehavior,
   stopObserveClick,
@@ -65,8 +69,9 @@ import {
 | 文件 | 职责 | 主要模块状态 | 产出 |
 | --- | --- | --- | --- |
 | `src/behavior/index.ts` | 聚合启动、停止和联合类型 | 无 | 转发各模块报告 |
-| `src/behavior/pv.ts` | 构造 PV、连续完整 URL 去重 | `lastReportedPageUrl` | `pv` |
-| `src/behavior/autoPageView.ts` | 把原生导航和 History API 调用适配为 `observePV()` | 当前 `window`、最新回调、监听器、原始和包装后的 History 方法 | 无独立报告 |
+| `src/behavior/pv.ts` | 构造 Page View、URL 脱敏、连续脱敏 URL 去重 | `lastReportedPageUrl` | `pv` |
+| `src/behavior/navigationAttempt.ts` | Navigation Attempt 开始 / 重定向 / 取消 / 提交 | 进行中的 Attempt | 经 `observePV()` 产出 `pv` |
+| `src/behavior/autoPageView.ts` | 把原生导航和 History API 调用适配为带 `startSource` 的 `observePV()` | 当前 `window`、最新回调、监听器、原始和包装后的 History 方法 | 无独立报告 |
 | `src/behavior/pageChange.ts` | 记录原生导航诊断信号 | 当前 `window`、最新回调、监听器、`previousUrl` | `hashchange`、`popstate` |
 | `src/behavior/click.ts` | 解析属性门控的点击 | 当前 `window`、最新回调、允许列表、监听器 | `click` |
 | `src/behavior/utils.ts` | 生成 Behavior 记录 ID | 无 | `uuid` |
@@ -87,14 +92,15 @@ observeBehavior(options)
   -> autoPageView === false
        ? stopObserveAutoPageView()
        : observeAutoPageView(onReport)
-  -> observePV(onReport)                  // 立即尝试首条 PV
+  -> observePV(onReport, { startSource: "initial" })  // 立即尝试首条 PV
 ```
 
 设计考虑：
 
 1. 先装监听器，再记录当前页，避免初始化过程中发生的后续导航没有观察者。
 2. 点击配置与页面访问相互独立；没有有效 `clickAttributes` 只会关闭点击。
-3. 所有首屏和后续 PV 最终都经过 `observePV()`，共用字段构造与去重规则。
+3. 所有首屏和后续 PV 最终都经过 `observePV()`，共用字段构造、URL 脱敏与去重规则。
+4. 聚合入口的首条 PV 使用 `startSource: "initial"`，与后续自动 / 手动来源区分。
 
 对同一个 `window` 重复启动时，长期监听模块只更新最新回调或配置，不重复安装监听器；但聚合入口仍会再次调用 `observePV()`，相同 URL 通常会被去重。
 
@@ -105,7 +111,7 @@ observeBehavior(options)
 | `stopObserveClick()` | 移除点击监听，清空点击回调和允许列表 |
 | `stopObserveAutoPageView()` | 移除自动 PV 的原生事件监听，按条件恢复 History 方法 |
 | `stopObservePageChange()` | 移除原生地址变化监听、清空 URL 游标，并同时停止自动 PV |
-| `stopObserveBehavior()` | 依次停止点击、地址变化和自动 PV，再清除 PV 去重地址 |
+| `stopObserveBehavior()` | 依次停止点击、地址变化和自动 PV，再清除 PV 去重地址与进行中的 Navigation Attempt |
 
 `stopObserveBehavior()` 不会：
 
@@ -141,17 +147,17 @@ Behavior collector
 
 传输返回成功只表示客户端已经接受或安排这次发送：Beacon 返回接受状态，XHR 返回已安排异步任务，Image 返回已设置 `src`。它们都不是服务端持久化确认。
 
-## 6. PV：`observePV`
+## 6. Page View：`observePV`
 
 ### 6.1 调用链与实现
 
 ```text
-observePV(onReport?)
+observePV(onReport?, options?)
   -> 检查 window / document / performance
-  -> pageUrl = window.location.href
+  -> pageUrl = sanitizePageUrl(options.pageUrl ?? location.href)
   -> pageUrl === lastReportedPageUrl ? 返回
   -> lastReportedPageUrl = pageUrl
-  -> 构造 PageViewReportData
+  -> 构造 PageViewReportData（含 viewId / startSource）
   -> dispatchReport(report, onReport)
 ```
 
@@ -165,37 +171,93 @@ interface PageViewReportData {
   pageUrl: string;
   referrer: string;
   uuid: string;
+  viewId: string;
+  startSource: PageViewStartSource;
+  pageName?: string;
+  routePattern?: string;
+  redirectCount?: number;
 }
 ```
 
 字段来源：
 
-- `startTime`：`performance.now()`，是页面时间原点后的毫秒数，不是 Unix 时间；
-- `pageUrl`：采集时的完整 `window.location.href`；
+- `startTime`：View Start。默认 `performance.now()`；Navigation Attempt 提交时使用 Attempt 开始时刻；
+- `pageUrl`：脱敏后的地址（见 6.2），用于单次诊断，不是默认聚合键；
 - `referrer`：浏览器的 `document.referrer`；
-- `uuid`：`generateBehaviorId()` 生成的本条 Behavior ID。
+- `viewId`：本 Page View 的稳定身份，后续 View Paint Metrics 通过它关联；默认与 `uuid` 同值；
+- `uuid`：本条 Behavior 报告 ID（当前与 `viewId` 相同）；
+- `startSource`：建立 View Start 的机制（`initial` / `manual` / `navigation` / `history` / `hashchange` / `popstate`）；
+- `pageName`：应用提供的业务页面名，优先聚合键；
+- `routePattern`：缺少 Page Name 时的路由模板回退；
+- `redirectCount`：到达最终展示页面前的重定向次数（仅在有意义时出现）。
 
 `document.referrer` 通常不会在 SPA 内部跳转时变成上一条前端路由。它保留浏览器文档来源语义，不是 SDK 维护的“上一页”。
 
-### 6.2 去重规则
+### 6.2 URL 脱敏与隐私边界
 
-`lastReportedPageUrl` 是模块级的单一游标，规则是“连续完整 URL 相同则跳过”：
+`sanitizePageUrl()` 会解析 URL 并删除已知敏感 query 键（大小写不敏感），保留 pathname 与 hash：
+
+`token`、`access_token`、`refresh_token`、`id_token`、`password`、`passwd`、`secret`、`api_key`、`apikey`、`auth`、`authorization`、`session`、`sessionid`、`sid`、`code`
+
+无法解析的字符串原样返回。Page URL 适合诊断，不应当作默认聚合键；聚合应优先使用 `pageName`，否则 `routePattern`。
+
+### 6.3 去重规则
+
+`lastReportedPageUrl` 是模块级的单一游标，规则是“连续**脱敏后** URL 相同则跳过”：
 
 - `A -> A`：第二次跳过；
 - `A -> B -> A`：三次均可产生 PV；
-- pathname、query 或 hash 任一部分变化：视为新 URL；
+- pathname、非敏感 query 或 hash 任一部分变化：视为新 URL；
+- 仅敏感 query 不同：脱敏后相同，会被去重；
 - `stopObserveBehavior()` / `clearPageViewDedup()`：清除游标，重启后同一 URL 可再次记录。
 
 游标在调用 `dispatchReport()` **之前**写入。因此这里的“已记录”只表示采集器接受了该 URL，不表示已经入队、发送或被服务端接收。即使没有配置 `url`，相同 URL 的下一次调用也会被去重。
 
-当前 API 不接收自定义 URL、路由名或规范化函数。若要按 `/users/:id`、pathname 或其他业务维度聚合，应在消费端或服务端派生该维度；不能通过给 `observePV()` 传入规范化 URL 实现。
+### 6.4 Navigation Attempt
 
-### 6.3 自动模式与业务确认模式
+路由框架或业务可在导航开始时调用 `startNavigationAttempt()`，在守卫失败时 `cancelNavigationAttempt()`，在重定向链中 `markNavigationRedirect()`，仅在最终目的地展示时 `commitNavigationAttempt()`：
+
+```ts
+monitor.behavior({ autoPageView: false });
+
+router.beforeEach((to, _from, next) => {
+  // 已有 Attempt 时不会重置 View Start，便于重定向链复用同一次 Attempt。
+  startNavigationAttempt();
+  if (needsLogin(to) && !isLoggedIn()) {
+    markNavigationRedirect();
+    next({ name: "login" });
+    return;
+  }
+  next();
+});
+
+router.afterEach((to) => {
+  if (to.meta.trackPageView === false) {
+    cancelNavigationAttempt();
+    return;
+  }
+  commitNavigationAttempt({
+    ...(to.name != null ? { pageName: String(to.name) } : {}),
+    ...(to.matched.at(-1)?.path
+      ? { routePattern: to.matched.at(-1)?.path }
+      : {}),
+  });
+});
+```
+
+语义：
+
+- 取消的目的地**不会**成为 Page View；
+- 重定向链仍是同一次 Navigation Attempt，保留原始 View Start，提交时带上累计 `redirectCount`；
+- 提交产出的 PV 使用 `startSource: "navigation"`；
+- 与自动 PV 并存时共用脱敏 URL 去重；若自动监听已抢先记录同一地址，后续 commit 会被跳过且无法补写 `pageName`。需要框架语义时关闭 `autoPageView`。
+
+### 6.5 自动模式与业务确认模式
 
 默认 `monitor.behavior()`：
 
-1. 启动时立即尝试当前页 PV；
-2. 后续由自动 PV 监听 URL 变化。
+1. 启动时立即尝试当前页 PV（`startSource: "initial"`）；
+2. 后续由自动 PV 监听 URL 变化（`history` / `hashchange` / `popstate`）。
 
 自动模式只能确认浏览器 URL 在某个触发点发生了变化，不能确认：
 
@@ -205,13 +267,17 @@ interface PageViewReportData {
 - 组件已经渲染；
 - 实际地址已经映射到业务路由模板。
 
-如果必须以路由成功钩子作为后续 PV 的唯一依据：
+如果必须以路由成功钩子作为后续 PV 的唯一依据，使用上一节的 Navigation Attempt API，或：
 
 ```ts
 monitor.behavior({ autoPageView: false });
 
-router.afterEach(() => {
-  observePV();
+router.afterEach((to) => {
+  observePV(undefined, {
+    pageName: String(to.name ?? ""),
+    routePattern: to.matched.at(-1)?.path,
+    startSource: "navigation",
+  });
 });
 ```
 
@@ -223,12 +289,12 @@ router.afterEach(() => {
 
 ### 7.1 触发矩阵
 
-| 触发源 | 自动 PV | 原生 `pageChange` |
-| --- | --- | --- |
-| `hashchange` | 调用 `observePV()` | `hashchange` |
-| `popstate` | 调用 `observePV()` | `popstate` |
-| `history.pushState()` | 包装后调用 `observePV()` | 无 |
-| `history.replaceState()` | 包装后调用 `observePV()` | 无 |
+| 触发源 | 自动 PV | `startSource` | 原生 `pageChange` |
+| --- | --- | --- | --- |
+| `hashchange` | 调用 `observePV()` | `hashchange` | `hashchange` |
+| `popstate` | 调用 `observePV()` | `popstate` | `popstate` |
+| `history.pushState()` | 包装后调用 `observePV()` | `history` | 无 |
+| `history.replaceState()` | 包装后调用 `observePV()` | `history` | 无 |
 
 浏览器主动调用 `pushState()` / `replaceState()` 不会触发 `popstate`，因此仅监听原生事件无法覆盖常见 History 模式 SPA。
 
@@ -238,7 +304,7 @@ router.afterEach(() => {
 业务调用 history.pushState / replaceState
   -> SDK wrapper
        -> Reflect.apply(original, this, args)
-       -> 原方法正常返回后 observePV(latestHandler)
+       -> 原方法正常返回后 observePV(latestHandler, { startSource: "history" })
        -> 返回原始结果
 ```
 

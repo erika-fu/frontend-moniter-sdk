@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelNavigationAttempt,
+  commitNavigationAttempt,
+  markNavigationRedirect,
   observeBehavior,
   observeClick,
   observePageChange,
   observePV,
+  startNavigationAttempt,
   stopObserveBehavior,
   stopObserveClick,
   stopObservePageChange,
@@ -39,7 +43,144 @@ describe("behavior monitoring", () => {
       pageUrl: "https://example.com/products",
       referrer: "https://search.example.com/",
       uuid: "pv-id",
+      viewId: "pv-id",
+      startSource: "manual",
     });
+  });
+
+  it("sanitizes sensitive query params and keeps pathname for page views", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+
+    vi.stubGlobal("window", {
+      location: {
+        href: "https://example.com/orders?token=secret&id=42#section",
+      },
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 10 });
+    vi.stubGlobal("crypto", { randomUUID: () => "view-1" });
+
+    observePV(onReport);
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "pv",
+        pageUrl: "https://example.com/orders?id=42#section",
+        viewId: "view-1",
+        startSource: "manual",
+      }),
+    );
+  });
+
+  it("records page name and route pattern when provided to observePV", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/products/99" },
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 15 });
+    vi.stubGlobal("crypto", { randomUUID: () => "named-view" });
+
+    observePV(onReport, {
+      pageName: "product-detail",
+      routePattern: "/products/:id",
+      startSource: "navigation",
+    });
+
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "pv",
+        pageName: "product-detail",
+        routePattern: "/products/:id",
+        startSource: "navigation",
+        viewId: "named-view",
+      }),
+    );
+  });
+
+  it("emits a page view only when a navigation attempt is committed", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const now = vi.fn().mockReturnValueOnce(100).mockReturnValue(200);
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/login" },
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now });
+    vi.stubGlobal("crypto", {
+      randomUUID: vi
+        .fn()
+        .mockReturnValueOnce("cancelled-view")
+        .mockReturnValueOnce("attempt-view"),
+    });
+
+    startNavigationAttempt({ onReport });
+    expect(onReport).not.toHaveBeenCalled();
+
+    cancelNavigationAttempt();
+    expect(onReport).not.toHaveBeenCalled();
+
+    startNavigationAttempt({ onReport });
+    window.location.href = "https://example.com/home";
+    commitNavigationAttempt({
+      pageName: "home",
+      routePattern: "/home",
+    });
+
+    expect(onReport).toHaveBeenCalledTimes(1);
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "pv",
+        startTime: 200,
+        pageUrl: "https://example.com/home",
+        pageName: "home",
+        routePattern: "/home",
+        startSource: "navigation",
+        viewId: "attempt-view",
+      }),
+    );
+  });
+
+  it("keeps the original start time and redirect count across a redirect chain", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const now = vi
+      .fn()
+      .mockReturnValueOnce(50)
+      .mockReturnValueOnce(80)
+      .mockReturnValue(120);
+
+    vi.stubGlobal("window", {
+      location: { href: "https://example.com/a" },
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now });
+    vi.stubGlobal("crypto", { randomUUID: () => "redirect-view" });
+
+    startNavigationAttempt({ onReport });
+    startNavigationAttempt({ onReport });
+    markNavigationRedirect();
+    window.location.href = "https://example.com/b";
+    markNavigationRedirect();
+    window.location.href = "https://example.com/c";
+    commitNavigationAttempt({
+      pageName: "final",
+      routePattern: "/c",
+    });
+
+    expect(onReport).toHaveBeenCalledTimes(1);
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subType: "pv",
+        startTime: 50,
+        pageUrl: "https://example.com/c",
+        pageName: "final",
+        routePattern: "/c",
+        redirectCount: 2,
+        startSource: "navigation",
+        viewId: "redirect-view",
+      }),
+    );
   });
 
   it("reports hash and history navigation without duplicate listeners", () => {
@@ -499,6 +640,66 @@ describe("behavior monitoring", () => {
     observePV(onReport);
 
     expect(onReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("labels automatic page views with their start source", () => {
+    const onReport = vi.fn<(data: BehaviorReportData) => void>();
+    const location = { href: "https://example.com/a" };
+    const listeners = new Map<string, Array<(event: Event) => void>>();
+    const history = {
+      pushState: vi.fn((...args: unknown[]) => {
+        if (typeof args[2] === "string") {
+          location.href = args[2];
+        }
+      }),
+      replaceState: vi.fn(),
+    };
+
+    vi.stubGlobal("window", {
+      location,
+      history,
+      addEventListener: vi.fn(
+        (type: string, handler: (event: Event) => void) => {
+          const current = listeners.get(type) ?? [];
+          current.push(handler);
+          listeners.set(type, current);
+        },
+      ),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", { referrer: "" });
+    vi.stubGlobal("performance", { now: () => 42 });
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn().mockImplementation(() => `id-${onReport.mock.calls.length}`),
+    });
+
+    observeBehavior({ onReport });
+    history.pushState({}, "", "https://example.com/b");
+
+    location.href = "https://example.com/c";
+    for (const handler of listeners.get("hashchange") ?? []) {
+      handler({} as HashChangeEvent);
+    }
+
+    location.href = "https://example.com/d";
+    for (const handler of listeners.get("popstate") ?? []) {
+      handler({} as PopStateEvent);
+    }
+
+    expect(
+      onReport.mock.calls
+        .map(([report]) => report)
+        .filter((report) => report.subType === "pv")
+        .map((report) => ({
+          pageUrl: report.pageUrl,
+          startSource: "startSource" in report ? report.startSource : undefined,
+        })),
+    ).toEqual([
+      { pageUrl: "https://example.com/a", startSource: "initial" },
+      { pageUrl: "https://example.com/b", startSource: "history" },
+      { pageUrl: "https://example.com/c", startSource: "hashchange" },
+      { pageUrl: "https://example.com/d", startSource: "popstate" },
+    ]);
   });
 
   it("reports a page view when history or hash navigation changes the url", () => {

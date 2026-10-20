@@ -21,6 +21,8 @@ function createPageView(): PageViewReportData {
         pageUrl: "https://example.test/",
         referrer: "",
         uuid: "page-view",
+        viewId: "page-view",
+        startSource: "manual",
     };
 }
 

@@ -392,14 +392,15 @@ Error Boundary 只能捕获 React 支持的组件树错误，不能捕获事件�
 
 本节示例只演示页面访问和导航。下面的 `monitor.behavior()` 不传 `clickAttributes`，因此不会上报点击；需要点击时另传允许的属性名，例如 `clickAttributes: ["clstag"]`。省略或传空列表只关闭点击上报。
 
-`monitor.behavior()` 会立即记录当前页 PV，并默认开启 `autoPageView`，继续监听：
+`monitor.behavior()` 会立即记录当前页 PV（`startSource: "initial"`），并默认开启 `autoPageView`，继续监听：
 
-- `hashchange`
-- `popstate`
-- `history.pushState`
-- `history.replaceState`
+- `hashchange`（`startSource: "hashchange"`）
+- `popstate`（`startSource: "popstate"`）
+- `history.pushState` / `replaceState`（`startSource: "history"`）
 
-History 模式和 Hash 模式的路由跳转都会自动产生 `subType: "pv"`。连续相同的完整 `pageUrl`（含 search、hash）只上报一次。
+History 模式和 Hash 模式的路由跳转都会自动产生 `subType: "pv"`。每条 Page View 带有稳定 `viewId`、View Start（`startTime`）和 `startSource`。连续相同的**脱敏后** `pageUrl` 只上报一次。
+
+`pageUrl` 会剥离已知敏感 query（如 `token`、`password`、`code`），保留 pathname 与 hash，适合诊断；默认聚合应优先使用应用提供的 `pageName`，否则使用 `routePattern`。
 
 同时，`behavior()` 仍会启动 `pageChange`，产出 `hashchange` / `popstate` 底层信号。产品漏斗应消费 `pv`，不要把 `pageChange` 当访问量。
 
@@ -410,65 +411,101 @@ History 模式和 Hash 模式的路由跳转都会自动产生 `subType: "pv"`�
 - 页面组件是否已渲染；
 - 路由模板名（例如 `/users/:id`）与实际地址的对应关系。
 
-模块字段、去重规则、History 包装和设计取舍见 [Behavior 用户行为监控](behavior.md)。
+需要这些语义时，使用 Navigation Attempt API（见 11.3）。模块字段、去重、脱敏和 History 包装见 [Behavior 用户行为监控](behavior.md)。
 
 ### 11.2 推荐接入方式
 
 | 场景 | 推荐做法 |
 | --- | --- |
 | 通用 SPA，只要求 URL 变化即计 PV | `monitor.behavior()`，使用默认自动 PV |
-| 必须在路由守卫通过、重定向完成后才计后续 PV | `monitor.behavior({ autoPageView: false })`，在成功钩子里调用 `observePV()` |
-| 自动 PV 与已有路由钩子暂时并存 | 两者可共用完整 URL 去重，但钩子通常不会替换先产生的自动 PV，也不赋予它“导航成功”语义 |
-| 连首条 PV 都必须由业务控制 | 不调用聚合 `behavior()`；按需组合 `observeClick()`、`observePageChange()` 和业务侧 `observePV()` |
-| 微前端卸载 / 测试清理 | `stopObserveBehavior()`，还原可恢复的 History 包装并清除 PV 去重 |
+| 必须在路由守卫通过、重定向完成后才计后续 PV | `monitor.behavior({ autoPageView: false })`，用 `startNavigationAttempt` / `commitNavigationAttempt` / `cancelNavigationAttempt` |
+| 自动 PV 与已有路由钩子暂时并存 | 两者可共用脱敏 URL 去重，但钩子通常不会替换先产生的自动 PV，也不赋予它“导航成功”语义 |
+| 连首条 PV 都必须由业务控制 | 不调用聚合 `behavior()`；按需组合 `observeClick()`、`observePageChange()` 和业务侧 Attempt / `observePV()` |
+| 微前端卸载 / 测试清理 | `stopObserveBehavior()`，还原可恢复的 History 包装并清除 PV 去重与进行中的 Attempt |
 
-### 11.3 Vue Router
-
-默认自动 PV 已覆盖常见 History / Hash URL 变化。若项目已有 `afterEach`，可以调用 `observePV()` 与自动模式共用去重，但这通常只是在迁移期避免重复：History 包装可能先记录相同 URL，后到达的钩子会被去重，不能把先前报告变成“导航确认成功”的报告。
-
-要以 Vue Router 成功钩子作为后续 PV 的唯一依据：
+### 11.3 Navigation Attempt（推荐框架接入）
 
 ```ts
+import {
+  cancelNavigationAttempt,
+  commitNavigationAttempt,
+  markNavigationRedirect,
+  startNavigationAttempt,
+} from "frontend-moniter-sdk";
+
 monitor.behavior({ autoPageView: false });
 
-router.afterEach((to) => {
-  // 也可按业务规则决定是否上报，例如忽略某些 meta
-  if (to.meta.trackPageView === false) {
+router.beforeEach((to, from, next) => {
+  // 同一 Navigation Attempt 内重复进入时，start 会复用已有 View Start。
+  startNavigationAttempt();
+  if (needsLogin(to) && !isLoggedIn()) {
+    markNavigationRedirect();
+    next({ name: "login" });
     return;
   }
-  observePV();
+  next();
+});
+
+router.afterEach((to) => {
+  if (to.meta.trackPageView === false) {
+    cancelNavigationAttempt();
+    return;
+  }
+  commitNavigationAttempt({
+    ...(to.name != null ? { pageName: String(to.name) } : {}),
+    ...(to.matched.at(-1)?.path
+      ? { routePattern: to.matched.at(-1)?.path }
+      : {}),
+  });
 });
 ```
 
-`autoPageView: false` 时，`behavior()` 仍会记录启动时的当前页；钩子对同一地址再调用会被去重。若希望“第一页也完全由 afterEach 决定”，需要自行避免启动瞬间与钩子的竞态，或接受启动时那一条首屏 PV。
+取消的目的地不会产生 Page View。重定向链保留原始 View Start（重复 `startNavigationAttempt` 不会重置），提交时带上 `redirectCount`。提交的 PV 使用 `startSource: "navigation"`。
+
+`autoPageView: false` 时，`behavior()` 仍会记录启动时的当前页；钩子对同一脱敏地址再调用会被去重。若希望“第一页也完全由 afterEach 决定”，需要自行避免启动瞬间与钩子的竞态，或接受启动时那一条首屏 PV。
 
 ### 11.4 React Router
 
 ```tsx
 import { useEffect } from "react";
-import { useLocation } from "react-router-dom";
-import { observePV } from "frontend-moniter-sdk";
+import { useLocation, useMatches } from "react-router-dom";
+import {
+  commitNavigationAttempt,
+  startNavigationAttempt,
+} from "frontend-moniter-sdk";
 
 export function RouteMonitor(): null {
   const location = useLocation();
+  const matches = useMatches();
 
   useEffect(() => {
-    observePV();
-  }, [location.pathname, location.search, location.hash]);
+    startNavigationAttempt();
+    const leaf = matches.at(-1);
+    const pageName =
+      typeof leaf?.handle === "object" &&
+      leaf.handle !== null &&
+      "pageName" in leaf.handle
+        ? String((leaf.handle as { pageName: unknown }).pageName)
+        : undefined;
+    const routePattern =
+      typeof leaf?.pathname === "string" ? leaf.pathname : undefined;
+    commitNavigationAttempt({
+      ...(pageName ? { pageName } : {}),
+      ...(routePattern ? { routePattern } : {}),
+    });
+  }, [location.key, matches]);
 
   return null;
 }
 ```
 
-在应用根部渲染 `<RouteMonitor />`。如果同时使用默认 `monitor.behavior()`，Effect 与自动 PV 共用去重，但 Effect 不会把已经产生的自动 PV 改成渲染完成语义。
-
-要只以 React Router 的 location effect 记录后续 PV：
+在应用根部渲染 `<RouteMonitor />`，并关闭自动 PV：
 
 ```ts
 monitor.behavior({ autoPageView: false });
 ```
 
-聚合入口仍会记录启动时当前页。若首条 PV 也必须由 React 控制，应按需启动细粒度观察器，并只在 `<RouteMonitor />` 中调用 `observePV()`。React 18 开发模式下，`StrictMode` 可能重复执行 Effect；连续相同完整 URL 会被去重。
+若仍使用默认自动 PV，Effect 与自动监听共用去重，但不会把已产生的自动 PV 改成导航成功语义。React 18 开发模式下，`StrictMode` 可能重复执行 Effect；连续相同脱敏 URL 会被去重。
 
 ### 11.5 无路由框架时的手写导航
 
@@ -484,14 +521,20 @@ url.searchParams.set("route", "orders");
 window.history.pushState({ route: "orders" }, "", url);
 ```
 
-Vue demo 用 `clickAttributes: ["clstag"]` 显式开启点击，再用 Hash / `pushState` 按钮验证自动 PV，见 [demo/src/startMonitoring.ts](../demo/src/startMonitoring.ts)。React demo 调用 `behavior()` 时不传 `clickAttributes`，只演示页面访问和导航，见 [react-demo/src/main.tsx](../react-demo/src/main.tsx)。
+Vue demo 同时演示自动 PV 与手动 Navigation Attempt（含取消），并用 `clickAttributes: ["clstag"]` 开启点击，见 [demo/src/scenarios.ts](../demo/src/scenarios.ts)。React demo 调用 `behavior()` 时不传 `clickAttributes`，演示自动 PV 与 Attempt 公共 API，见 [react-demo/src/App.tsx](../react-demo/src/App.tsx)。
 
 ### 11.6 消费与排查
 
 ```ts
 monitor.subscribe((data) => {
   if (data.type === "behavior" && data.subType === "pv") {
-    console.log("page view", data.pageUrl, data.referrer);
+    console.log(
+      "page view",
+      data.viewId,
+      data.startSource,
+      data.pageName ?? data.routePattern,
+      data.pageUrl,
+    );
   }
 });
 ```
@@ -501,8 +544,9 @@ monitor.subscribe((data) => {
 1. 是否先 `init` 再 `behavior`，避免首条 PV 用到空配置；
 2. History 模式是否真的调用了 `pushState`（自动 PV 依赖包装）；
 3. 是否误把 `hashchange` / `popstate` 报告当成 PV；
-4. 连续相同 URL 被跳过是否符合预期；
-5. 关闭 `autoPageView` 后是否仍有业务侧 `observePV()`。
+4. 连续相同脱敏 URL 被跳过是否符合预期；
+5. 关闭 `autoPageView` 后是否仍有业务侧 Attempt / `observePV()`；
+6. `pageUrl` 是否仍含敏感 query（应被剥离）；聚合是否误用完整 URL 而非 `pageName` / `routePattern`。
 
 ## 12. 停止监听
 
