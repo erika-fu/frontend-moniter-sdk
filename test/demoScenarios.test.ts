@@ -1,15 +1,24 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     failResource,
     pushHistoryRoute,
     requestWithFetch,
     requestWithXHR,
+    runSkeletonToContentScenario,
     switchRoute,
 } from "../demo/src/scenarios.js";
+import { stopObserveBehavior } from "../src/behavior/index.js";
+import { resetViewFirstContentfulPaint } from "../src/performance/observeViewFCP.js";
 
 describe("demo monitoring scenarios", () => {
     afterEach(() => {
+        resetViewFirstContentfulPaint();
+        stopObserveBehavior();
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     it("sends successful and failed Fetch requests to distinct URLs", () => {
@@ -99,5 +108,40 @@ describe("demo monitoring scenarios", () => {
                 search: "?route=orders",
             }),
         );
+    });
+
+    it("runs a skeleton-to-content View FCP scenario end to end", async () => {
+        vi.useFakeTimers();
+        const reports: Array<{ subType?: string; measurementSource?: string }> =
+            [];
+        const { subscribe } = await import("../src/index.js");
+        const unsubscribe = subscribe((data) => {
+            reports.push(data as { subType?: string; measurementSource?: string });
+        });
+
+        window.history.replaceState({}, "", "/demo");
+        const scenario = runSkeletonToContentScenario("declared-content", 400);
+        expect(scenario.phase).toBe("skeleton");
+        expect(
+            scenario.root.querySelector("[data-view-skeleton]"),
+        ).not.toBeNull();
+        expect(
+            reports.some((r) => r.subType === "view-first-contentful-paint"),
+        ).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(400);
+        await Promise.resolve();
+
+        expect(scenario.phase).toBe("content");
+        expect(
+            reports.some(
+                (r) =>
+                    r.subType === "view-first-contentful-paint" &&
+                    r.measurementSource === "declared-content",
+            ),
+        ).toBe(true);
+
+        scenario.dispose();
+        unsubscribe();
     });
 });

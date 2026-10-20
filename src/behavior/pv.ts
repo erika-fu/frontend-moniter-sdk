@@ -90,12 +90,53 @@ const SENSITIVE_QUERY_KEYS = new Set([
 let lastReportedPageUrl: string | undefined;
 
 /**
- * 清除最近一次成功上报的页面地址。
+ * 当前已展示的 Page View 上下文，供 View Paint Metrics 关联。
+ */
+export interface ActivePageView {
+    viewId: string;
+    startTime: number;
+    startSource: PageViewStartSource;
+    pageUrl: string;
+    pageName?: string;
+    routePattern?: string;
+    /**
+     * View Start 时已在文档中的节点；后续 View Paint 将其视为 retained，不计为新内容。
+     */
+    retainedNodes: WeakSet<Node>;
+}
+
+let activePageView: ActivePageView | undefined;
+
+/**
+ * 返回最近一次成功上报的 Page View 上下文；尚无 Page View 时为 `undefined`。
+ */
+export function getActivePageView(): ActivePageView | undefined {
+    return activePageView;
+}
+
+function snapshotRetainedNodes(): WeakSet<Node> {
+    const retained = new WeakSet<Node>();
+    if (typeof document === "undefined") {
+        return retained;
+    }
+    const root = document.documentElement;
+    if (root) {
+        retained.add(root);
+        root.querySelectorAll("*").forEach((node) => {
+            retained.add(node);
+        });
+    }
+    return retained;
+}
+
+/**
+ * 清除最近一次成功上报的页面地址与活动 Page View。
  *
  * 停止行为监控时调用，让下一次启动可以重新记录当前页。
  */
 export function clearPageViewDedup(): void {
     lastReportedPageUrl = undefined;
+    activePageView = undefined;
 }
 
 /**
@@ -143,17 +184,30 @@ export function observePV(
     }
 
     const viewId = options.viewId ?? generateBehaviorId();
+    const startTime = options.startTime ?? performance.now();
+    const startSource = options.startSource ?? "manual";
     lastReportedPageUrl = pageUrl;
+    activePageView = {
+        viewId,
+        startTime,
+        startSource,
+        pageUrl,
+        retainedNodes: snapshotRetainedNodes(),
+        ...(options.pageName !== undefined ? { pageName: options.pageName } : {}),
+        ...(options.routePattern !== undefined
+            ? { routePattern: options.routePattern }
+            : {}),
+    };
     dispatchReport(
         {
             type: "behavior",
             subType: "pv",
-            startTime: options.startTime ?? performance.now(),
+            startTime,
             pageUrl,
             referrer: document.referrer,
             uuid: viewId,
             viewId,
-            startSource: options.startSource ?? "manual",
+            startSource,
             ...(options.pageName !== undefined
                 ? { pageName: options.pageName }
                 : {}),

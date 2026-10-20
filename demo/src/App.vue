@@ -14,12 +14,16 @@ import {
     rejectPromise,
     requestWithFetch,
     requestWithXHR,
+    runSkeletonToContentScenario,
     switchRoute,
     throwJavaScriptError,
+    type SkeletonToContentResult,
 } from "./scenarios";
 
 const showVueError = ref(false);
 const unmarkedComparisonMessage = ref("");
+const viewFcpStatus = ref("");
+let activeViewFcpScenario: SkeletonToContentResult | undefined;
 const monitorUrl =
     import.meta.env.VITE_MONITOR_URL ??
     "http://localhost:9800/api/v1/reportData";
@@ -35,7 +39,11 @@ const VueErrorScenario = defineComponent({
     },
 });
 
-onBeforeUnmount(stopReplayRecording);
+onBeforeUnmount(() => {
+    stopReplayRecording();
+    activeViewFcpScenario?.dispose();
+    activeViewFcpScenario = undefined;
+});
 onMounted(startReplayRecording);
 
 function triggerVueError(): void {
@@ -44,6 +52,25 @@ function triggerVueError(): void {
 
 function acknowledgeUnmarkedClick(): void {
     unmarkedComparisonMessage.value = "未标记对照已执行";
+}
+
+function runViewFcpScenario(
+    mode: "declared-content" | "application-mark",
+): void {
+    activeViewFcpScenario?.dispose();
+    viewFcpStatus.value =
+        mode === "declared-content"
+            ? "已提交 Page View，正在展示 skeleton…"
+            : "已提交 Page View，等待应用 mark…";
+    activeViewFcpScenario = runSkeletonToContentScenario(mode, 600);
+    window.setTimeout(() => {
+        if (activeViewFcpScenario?.phase === "content") {
+            viewFcpStatus.value =
+                mode === "declared-content"
+                    ? "真实内容已插入（declared-content），请在 platform 的 View Paint 中查看"
+                    : "已调用 markViewFirstContentfulPaint（application-mark）";
+        }
+    }, 700);
 }
 </script>
 
@@ -170,6 +197,39 @@ function acknowledgeUnmarkedClick(): void {
                     role="status"
                 >
                     {{ unmarkedComparisonMessage }}
+                </p>
+            </section>
+
+            <section class="scenario-section" aria-labelledby="view-paint-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">VIEW PAINT</p>
+                        <h2 id="view-paint-title">View First Contentful Paint</h2>
+                    </div>
+                </div>
+                <p class="section-note">
+                    先提交 delayed-content Page View，再展示 skeleton（不计为 VFCP），延迟后换成真实内容。declared-content 依赖
+                    <code>data-view-content</code>；application-mark 由业务在内容就绪时调用
+                    <code>markViewFirstContentfulPaint</code>。二者与文档级 FCP 相互独立。
+                </p>
+                <div class="scenario-grid">
+                    <button
+                        type="button"
+                        clstag="view-fcp-declared-content"
+                        @click="runViewFcpScenario('declared-content')"
+                    >
+                        Skeleton → declared-content
+                    </button>
+                    <button
+                        type="button"
+                        clstag="view-fcp-application-mark"
+                        @click="runViewFcpScenario('application-mark')"
+                    >
+                        Skeleton → application-mark
+                    </button>
+                </div>
+                <p v-if="viewFcpStatus" class="section-note" role="status">
+                    {{ viewFcpStatus }}
                 </p>
             </section>
 

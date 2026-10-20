@@ -15,7 +15,10 @@ import {
 } from "./store.js";
 import { demoSourceMapUrl, tryServeStatic } from "./static.js";
 import type { ErrorStatus } from "./errorIssues.js";
-import type { PerformanceMetricName } from "./performance.js";
+import type {
+    PerformanceMetricName,
+    ViewPaintMetricName,
+} from "./performance.js";
 
 export interface ReportServerOptions {
     logger?: ((report: unknown) => void) | undefined;
@@ -506,6 +509,18 @@ export function createReportServer(
                     .filter(Boolean) as PerformanceMetricName[];
                 sendJson(response, 200, {
                     metrics: store.performanceMetrics({
+                        ...performanceQuery,
+                        metrics: metricNames.length ? metricNames : undefined,
+                    }),
+                }, headers);
+                return;
+            }
+            if (url.pathname === "/api/v1/performance/view-paint") {
+                const metricNames = (url.searchParams.get("metrics") ?? "")
+                    .split(",")
+                    .filter(Boolean) as ViewPaintMetricName[];
+                sendJson(response, 200, {
+                    metrics: store.viewPaintMetrics({
                         ...performanceQuery,
                         metrics: metricNames.length ? metricNames : undefined,
                     }),

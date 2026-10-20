@@ -2,7 +2,11 @@ import {
     cancelNavigationAttempt,
     commitNavigationAttempt,
     markNavigationRedirect,
+    markViewFirstContentfulPaint,
+    observeViewFirstContentfulPaint,
+    resetViewFirstContentfulPaint,
     startNavigationAttempt,
+    stopObserveViewFirstContentfulPaint,
 } from "../../src/index.js";
 
 export function requestWithFetch(success: boolean): void {
@@ -102,4 +106,80 @@ export function commitRedirectNavigation(): void {
         pageUrl,
     });
     window.location.hash = "#/scenario/orders";
+}
+
+export type SkeletonToContentPhase = "idle" | "skeleton" | "content";
+
+export interface SkeletonToContentResult {
+    root: HTMLElement;
+    phase: SkeletonToContentPhase;
+    dispose: () => void;
+}
+
+/**
+ * 可复现的 skeleton → 真实内容场景，演示 View First Contentful Paint。
+ *
+ * 1. 提交 Page View（Navigation Attempt）
+ * 2. 在声明内容区放入 skeleton（不应触发 VFCP）
+ * 3. 延迟后替换为 `data-view-content`（declared-content）或调用 mark（application-mark）
+ */
+export function runSkeletonToContentScenario(
+    mode: "declared-content" | "application-mark" = "declared-content",
+    delayMs = 400,
+): SkeletonToContentResult {
+    resetViewFirstContentfulPaint();
+
+    const pageUrl = new URL(
+        `#/scenario/delayed-content?t=${Date.now()}`,
+        window.location.href,
+    ).href;
+    startNavigationAttempt();
+    commitNavigationAttempt({
+        pageName: "delayed-content",
+        routePattern: "/scenario/delayed-content",
+        pageUrl,
+    });
+    window.location.hash = "#/scenario/delayed-content";
+
+    const root = document.createElement("section");
+    root.setAttribute("data-view-fcp-root", "");
+    root.setAttribute("aria-label", "delayed content scenario");
+    document.body.append(root);
+
+    const skeleton = document.createElement("div");
+    skeleton.setAttribute("data-view-skeleton", "");
+    skeleton.textContent = "Loading product…";
+    root.append(skeleton);
+
+    if (mode === "declared-content") {
+        observeViewFirstContentfulPaint({ root });
+    }
+
+    let phase: SkeletonToContentPhase = "skeleton";
+    const timer = window.setTimeout(() => {
+        skeleton.remove();
+        const content = document.createElement("article");
+        content.textContent = "Product details ready";
+        if (mode === "declared-content") {
+            content.setAttribute("data-view-content", "");
+        }
+        root.append(content);
+        phase = "content";
+        if (mode === "application-mark") {
+            markViewFirstContentfulPaint();
+        }
+    }, delayMs);
+
+    return {
+        root,
+        get phase() {
+            return phase;
+        },
+        dispose() {
+            window.clearTimeout(timer);
+            stopObserveViewFirstContentfulPaint();
+            root.remove();
+            phase = "idle";
+        },
+    };
 }

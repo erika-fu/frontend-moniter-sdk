@@ -464,6 +464,30 @@ router.afterEach((to) => {
 
 `autoPageView: false` 时，`behavior()` 仍会记录启动时的当前页；钩子对同一脱敏地址再调用会被去重。若希望“第一页也完全由 afterEach 决定”，需要自行避免启动瞬间与钩子的竞态，或接受启动时那一条首屏 PV。
 
+### 11.3.1 View First Contentful Paint
+
+在已有 Page View（`viewId` + View Start）之后，可以测量该页有意义内容首次可见的耗时。它与文档级 FCP 无关：
+
+```ts
+import {
+  markViewFirstContentfulPaint,
+  observeViewFirstContentfulPaint,
+} from "frontend-moniter-sdk";
+
+// 方式 A：业务在数据渲染完成后显式标记
+async function showProduct(id: string) {
+  const product = await fetchProduct(id);
+  renderProduct(product);
+  markViewFirstContentfulPaint();
+}
+
+// 方式 B：声明内容区，首个 data-view-content 节点计入
+observeViewFirstContentfulPaint({ root: "#page-main" });
+// 模板中：skeleton 使用 data-view-skeleton；真实内容使用 data-view-content
+```
+
+选择建议：路由组件能明确知道「主内容已就绪」时用 application-mark；希望 DOM 观察驱动时用 declared-content，并保证 skeleton / spinner / placeholder 带上排除属性。Vue demo 的「Skeleton → …」按钮可复现延迟内容场景。字段与边界见 [Performance](performance.md) 第 6.A 节。
+
 ### 11.4 React Router
 
 ```tsx

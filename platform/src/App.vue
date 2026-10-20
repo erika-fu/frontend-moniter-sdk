@@ -32,6 +32,22 @@ interface PerformanceMetric {
   trend: Array<{ bucket: number; sampleCount: number; p50: number | null }>;
   pages: Array<{ pageUrl: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
 }
+interface ViewPaintMetric {
+  metric: "view-first-contentful-paint";
+  sampleCount: number;
+  p50: number | null;
+  p75: number | null;
+  p95: number | null;
+  pages: Array<{ pageKey: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
+  sources: Array<{
+    measurementSource: string;
+    startSource: string;
+    sampleCount: number;
+    p50: number | null;
+    p75: number | null;
+    p95: number | null;
+  }>;
+}
 interface PerformanceRequest {
   id: number; timestamp: number; pageUrl: string; url: string; method: string;
   status: number; duration: number; success: boolean; subType: "fetch" | "xhr";
@@ -42,6 +58,7 @@ interface PerformanceResource {
 }
 interface PerformanceState {
   metrics: PerformanceMetric[];
+  viewPaint: ViewPaintMetric[];
   requests: { items: PerformanceRequest[]; total: number; page: number; pageSize: number };
   resources: { items: PerformanceResource[]; total: number; page: number; pageSize: number };
 }
@@ -321,16 +338,18 @@ async function loadPerformance(): Promise<void> {
   listQuery.set("page", String(performancePage.value));
   listQuery.set("pageSize", "10");
   try {
-    const [metricsResponse, requestsResponse, resourcesResponse] = await Promise.all([
+    const [metricsResponse, viewPaintResponse, requestsResponse, resourcesResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
+      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint`),
       fetch(`${apiUrl}/api/v1/performance/requests?${listQuery}`),
       fetch(`${apiUrl}/api/v1/performance/resources?${listQuery}`),
     ]);
-    if (!metricsResponse.ok || !requestsResponse.ok || !resourcesResponse.ok) {
+    if (!metricsResponse.ok || !viewPaintResponse.ok || !requestsResponse.ok || !resourcesResponse.ok) {
       throw new Error("性能数据加载失败");
     }
     performance.value = {
       metrics: ((await metricsResponse.json()) as { metrics: PerformanceMetric[] }).metrics,
+      viewPaint: ((await viewPaintResponse.json()) as { metrics: ViewPaintMetric[] }).metrics,
       requests: await requestsResponse.json() as PerformanceState["requests"],
       resources: await resourcesResponse.json() as PerformanceState["resources"],
     };
@@ -686,6 +705,49 @@ onUnmounted(() => {
             <h4>页面排行</h4>
             <p v-if="!metric.pages.length" class="result-count">暂无页面数据</p>
             <ol v-else class="rank-list"><li v-for="page in metric.pages.slice(0, 5)" :key="page.pageUrl"><span :title="page.pageUrl">{{ page.pageUrl }}</span><strong>{{ duration(page.p50) }}</strong></li></ol>
+          </article>
+        </div>
+      </section>
+      <section class="performance-section" aria-labelledby="view-paint-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">View paint</p>
+            <h2 id="view-paint-title">View First Contentful Paint</h2>
+          </div>
+        </div>
+        <p class="result-count">相对 Page View 的 View Start，与文档级 FCP 分开统计；聚合键优先 Page Name，否则 Route Pattern。</p>
+        <div class="summary-grid">
+          <article v-for="metric in performance.viewPaint" :key="metric.metric" class="metric">
+            <span>VFCP · {{ metric.sampleCount }} 个样本</span>
+            <strong>{{ duration(metric.p50) }}</strong>
+            <small>P75 {{ duration(metric.p75) }} · P95 {{ duration(metric.p95) }}</small>
+          </article>
+        </div>
+        <div class="performance-grid">
+          <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-pages`" class="performance-panel">
+            <div class="section-heading"><h3>按页面聚合</h3><span>{{ metric.sampleCount }} 个样本</span></div>
+            <p v-if="!metric.pages.length" class="state">当前筛选条件下没有 View Paint 数据</p>
+            <ol v-else class="rank-list">
+              <li v-for="page in metric.pages.slice(0, 8)" :key="page.pageKey">
+                <span :title="page.pageKey">{{ page.pageKey }}</span>
+                <strong>{{ duration(page.p50) }}</strong>
+              </li>
+            </ol>
+          </article>
+          <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-sources`" class="performance-panel">
+            <div class="section-heading"><h3>Measurement / Start Source</h3></div>
+            <p v-if="!metric.sources.length" class="state">暂无来源维度</p>
+            <table v-else>
+              <thead><tr><th>Measurement</th><th>Start</th><th>样本</th><th>P50</th></tr></thead>
+              <tbody>
+                <tr v-for="source in metric.sources" :key="`${source.measurementSource}-${source.startSource}`">
+                  <td>{{ source.measurementSource }}</td>
+                  <td>{{ source.startSource }}</td>
+                  <td>{{ source.sampleCount }}</td>
+                  <td>{{ duration(source.p50) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </article>
         </div>
       </section>

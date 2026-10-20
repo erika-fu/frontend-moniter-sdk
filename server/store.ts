@@ -8,6 +8,7 @@ import {
 } from "./errorIssues.js";
 import {
     summarizeMetrics,
+    summarizeViewPaintMetrics,
     type PerformanceEventRow,
     type PerformanceFilter,
     type PerformanceListResult,
@@ -17,6 +18,8 @@ import {
     type RequestQuery,
     type PerformanceResource,
     type ResourceQuery,
+    type ViewPaintMetricQuery,
+    type ViewPaintMetricPoint,
 } from "./performance.js";
 
 export interface StoredEvent {
@@ -997,6 +1000,15 @@ export class SQLiteReportStore {
 
     performanceMetrics(query: PerformanceMetricQuery): PerformanceMetricPoint[] {
         return summarizeMetrics(this.performanceEvents(query), query);
+    }
+
+    viewPaintMetrics(query: ViewPaintMetricQuery): ViewPaintMetricPoint[] {
+        return summarizeViewPaintMetrics(
+            this.performanceEvents(query, [
+                "view-first-contentful-paint",
+            ]),
+            query,
+        );
     }
 
     performanceRequests(query: RequestQuery): PerformanceListResult<PerformanceRequest> {

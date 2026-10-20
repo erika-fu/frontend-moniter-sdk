@@ -2,17 +2,20 @@
 
 本文是 `src/performance/` 的权威实现指南，说明 SDK 如何采集性能数据、各采集器为何使用特定浏览器 API、报告如何经过共享上报管道，以及数据不得被过度解读的边界。
 
-该模块当前会产生七种报告子类型：
+该模块当前会产生八种报告子类型：
 
 - `first-paint`
 - `first-contentful-paint`
 - `largest-contentful-paint`
+- `view-first-contentful-paint`
 - `load`
 - `resource`
 - `fetch`
 - `xhr`
 
 它不采集 CLS、INP、作为独立 Web Vital 的 TTFB、长任务、内存、FPS 或自定义标记。资源报告确实包含一个派生字段 `ttfb`，但该值描述的是单个资源请求，而非页面级 TTFB Web Vital。
+
+`view-first-contentful-paint`（View First Contentful Paint）是 Page View 作用域的 View Paint Metric，与文档级 `first-contentful-paint` 相互独立；不会由 `monitor.performance()` 自动启动，需业务调用 `markViewFirstContentfulPaint()` 或 `observeViewFirstContentfulPaint()`。
 
 性能采集器只创建报告并将其交给 SDK 全局分发器。安装与应用集成见 [业务使用](business-usage.md)，共享缓存 / envelope / 传输行为见 [SDK 入口与内部机制](sdk-internals.md)，端点、存储、保留和查询契约见 [服务端文档](server.md)。
 
@@ -56,19 +59,23 @@ import {
   stopObserveFetch,
   observeXHR,
   stopObserveXHR,
+  markViewFirstContentfulPaint,
+  observeViewFirstContentfulPaint,
+  stopObserveViewFirstContentfulPaint,
 } from "frontend-moniter-sdk";
 ```
 
-默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch 和 XHR 包装器具有显式停止 API。
+默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR 与 View FCP 观察器具有显式停止 API。
 
 ## 2. 模块职责与生命周期
 
 | 文件 | 职责 | 模块级状态 | 产出 |
 | --- | --- | --- | --- |
-| `src/performance/index.ts` | 定义报告联合类型并启动所有采集器 | 无 | 转发全部七种子类型 |
+| `src/performance/index.ts` | 定义报告联合类型并启动文档级采集器 | 无 | 转发文档级七种子类型 |
 | `observePaint.ts` | 读取原生 First Paint 条目 | 无；每次调用创建一个观察器 | `first-paint` |
 | `observeFCP.ts` | 适配 `web-vitals` FCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `first-contentful-paint` |
 | `observeLCP.ts` | 适配 `web-vitals` LCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `largest-contentful-paint` |
+| `observeViewFCP.ts` | Page View 作用域的 View First Contentful Paint | 已上报 `viewId`、声明区 MutationObserver | `view-first-contentful-paint` |
 | `observeLoad.ts` | 测量文档加载完成 | 无；每次加载前调用添加一个一次性监听器 | `load` |
 | `observeResources.ts` | 获取一次缓冲的首屏加载资源快照 | 无；每次调用创建监听器或观察器 | `resource` |
 | `observeFetch.ts` | 包装当前 `window.fetch` | 被观察的所有者、原始 / 包装后的函数、最新回调 | `fetch` |
@@ -255,6 +262,49 @@ interface FirstContentfulPaintReportData extends FCPMetric {
 `web-vitals` 观察缓冲的 paint 条目，筛选在页面首次隐藏时间或之后的 FCP，按 `activationStart` 调整预渲染页面，并可在 BFCache 恢复后创建另一项指标。它也会检测支持的条目类型并在内部捕获观察器失败。
 
 SDK 不传递 `reportSoftNavs: true`；FCP 以文档导航为作用域，不会因普通 SPA 路由重置。`pageUrl` 在依赖回调运行时读取，因此它可能反映底层 paint 条目发生时之后的路由。
+
+## 6.A View First Contentful Paint：`markViewFirstContentfulPaint` / `observeViewFirstContentfulPaint`
+
+View First Contentful Paint（VFCP）测量**当前 Page View** 从 View Start 到「属于该页的有意义内容首次可见」的耗时。它：
+
+- 通过 `viewId` 关联活动 Page View（由 `observePV` / Navigation Attempt 建立）；
+- 使用独立 `subType: "view-first-contentful-paint"`，不得与文档级 `first-contentful-paint` 混读；
+- 每个 `viewId` 最多上报一次最终值；
+- 保留 Measurement Source（如何判定内容绘制）与 Start Source（如何建立 View Start）。
+
+### 6.A.1 两种 Measurement Source
+
+| API | Measurement Source | 适用 |
+| --- | --- | --- |
+| `markViewFirstContentfulPaint(onReport?)` | `application-mark` | 业务在真实内容就绪时显式标记 |
+| `observeViewFirstContentfulPaint({ root?, onReport? })` | `declared-content` | 观察声明内容区，首个合格节点出现时上报 |
+
+`declared-content` 只认可带 `data-view-content` 的节点，并排除：
+
+- View Start 时已在文档中的 retained 节点；
+- `data-view-skeleton` / `data-view-placeholder` / `data-view-spinner`；
+- 无文本且无 `img`/`svg`/`canvas`/`video` 的空节点。
+
+`application-mark` 由业务保证在真实内容就绪时调用；勿在仅有 skeleton / spinner / placeholder 时标记。声明观察使用 MutationObserver 后的 `performance.now()` 近似可见时刻，并非浏览器 paint 时间戳。
+
+### 6.A.2 报告契约
+
+```ts
+{
+  type: "performance";
+  subType: "view-first-contentful-paint";
+  name: "VFCP";
+  value: number; // 相对 View Start 的毫秒
+  pageUrl: string;
+  viewId: string;
+  measurementSource: "application-mark" | "declared-content";
+  startSource: PageViewStartSource;
+  pageName?: string;
+  routePattern?: string;
+}
+```
+
+服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并。
 
 ## 7. LCP：`observeLCP()`
 
