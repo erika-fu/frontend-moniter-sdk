@@ -1,18 +1,24 @@
 import {
     cancelNavigationAttempt,
     commitNavigationAttempt,
+    getSoftNavigationSupport,
+    isSoftNavigationSupported,
     markNavigationRedirect,
     markViewFirstContentfulPaint,
     observeKeyContentPaint,
+    observeSoftNavigationViewPaint,
     observeViewFirstContentfulPaint,
     observeViewLargestContentfulPaint,
     resetKeyContentPaint,
+    resetSoftNavigationViewPaint,
     resetViewFirstContentfulPaint,
     resetViewLargestContentfulPaint,
     startNavigationAttempt,
     stopObserveKeyContentPaint,
+    stopObserveSoftNavigationViewPaint,
     stopObserveViewFirstContentfulPaint,
     stopObserveViewLargestContentfulPaint,
+    type SoftNavigationSupportStatus,
 } from "../../src/index.js";
 
 export function requestWithFetch(success: boolean): void {
@@ -112,6 +118,50 @@ export function commitRedirectNavigation(): void {
         pageUrl,
     });
     window.location.hash = "#/scenario/orders";
+}
+
+export interface SoftNavigationSupportSnapshot {
+    supported: boolean;
+    status: SoftNavigationSupportStatus;
+}
+
+/**
+ * 探测并启动 Soft Navigation View Paint 观察（渐进增强）。
+ * 不完整支持时安全降级；不宣称覆盖标准 Core Web Vitals。
+ */
+export function probeSoftNavigationViewPaintSupport(): SoftNavigationSupportSnapshot {
+    resetSoftNavigationViewPaint();
+    observeSoftNavigationViewPaint();
+    const status = getSoftNavigationSupport();
+    return {
+        supported: isSoftNavigationSupported(),
+        status,
+    };
+}
+
+export function stopSoftNavigationViewPaintDemo(): void {
+    stopObserveSoftNavigationViewPaint();
+}
+
+/**
+ * Soft Navigation 优先场景：提交 Page View 并启用原生 soft-navigation 观察。
+ * 在支持的浏览器中，VFCP/VLCP 会以 `soft-navigation` 作为 Measurement Source；
+ * 否则可继续用 declared-content / application-mark 回退。
+ */
+export function runSoftNavigationViewPaintScenario(): SoftNavigationSupportSnapshot {
+    const support = probeSoftNavigationViewPaintSupport();
+    const pageUrl = new URL(
+        `#/scenario/soft-navigation?t=${Date.now()}`,
+        window.location.href,
+    ).href;
+    startNavigationAttempt();
+    commitNavigationAttempt({
+        pageName: "soft-navigation",
+        routePattern: "/scenario/soft-navigation",
+        pageUrl,
+    });
+    window.location.hash = "#/scenario/soft-navigation";
+    return support;
 }
 
 export type SkeletonToContentPhase = "idle" | "skeleton" | "content";

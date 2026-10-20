@@ -34,6 +34,7 @@ export * from "./observeLCP.js";
 export * from "./observeLoad.js";
 export * from "./observePaint.js";
 export * from "./observeResources.js";
+export * from "./observeSoftNavigationViewPaint.js";
 export * from "./observeViewFCP.js";
 export * from "./observeViewLCP.js";
 export * from "./observeXHR.js";

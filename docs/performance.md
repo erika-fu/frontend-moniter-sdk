@@ -17,9 +17,9 @@
 
 它不采集 CLS、INP、作为独立 Web Vital 的 TTFB、长任务、内存、FPS 或自定义标记。资源报告确实包含一个派生字段 `ttfb`，但该值描述的是单个资源请求，而非页面级 TTFB Web Vital。
 
-`view-first-contentful-paint`（View First Contentful Paint）是 Page View 作用域的 View Paint Metric，与文档级 `first-contentful-paint` 相互独立；不会由 `monitor.performance()` 自动启动，需业务调用 `markViewFirstContentfulPaint()` 或 `observeViewFirstContentfulPaint()`。
+`view-first-contentful-paint`（View First Contentful Paint）是 Page View 作用域的 View Paint Metric，与文档级 `first-contentful-paint` 相互独立；不会由 `monitor.performance()` 自动启动，需业务调用 `markViewFirstContentfulPaint()`、`observeViewFirstContentfulPaint()`，或在支持时通过 `observeSoftNavigationViewPaint()` 使用原生 Soft Navigation。
 
-`view-largest-contentful-paint`（View Largest Contentful Paint）同样属于 Page View，与文档级 `largest-contentful-paint` 相互独立。它观察声明的首屏内容区，候选只保留在本地，每个 `viewId` 最多上报一次最终值。不会由 `monitor.performance()` 自动启动，需业务调用 `observeViewLargestContentfulPaint()`。
+`view-largest-contentful-paint`（View Largest Contentful Paint）同样属于 Page View，与文档级 `largest-contentful-paint` 相互独立。它观察声明的首屏内容区，候选只保留在本地，每个 `viewId` 最多上报一次最终值。不会由 `monitor.performance()` 自动启动，需业务调用 `observeViewLargestContentfulPaint()`，或在支持时通过 `observeSoftNavigationViewPaint()`。
 
 `key-content-paint`（Key Content Paint）测量应用声明的任务关键内容可见耗时，与最大元素无关，也不是 View LCP 的别名或回退。每个 `(viewId, keyContentName)` 最多上报一次；不会由 `monitor.performance()` 自动启动，需业务调用 `markKeyContentPaint()` 或 `observeKeyContentPaint()`。
 
@@ -70,13 +70,17 @@ import {
   stopObserveViewFirstContentfulPaint,
   observeViewLargestContentfulPaint,
   stopObserveViewLargestContentfulPaint,
+  observeSoftNavigationViewPaint,
+  stopObserveSoftNavigationViewPaint,
+  isSoftNavigationSupported,
+  getSoftNavigationSupport,
   markKeyContentPaint,
   observeKeyContentPaint,
   stopObserveKeyContentPaint,
 } from "frontend-moniter-sdk";
 ```
 
-默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR、View FCP、View LCP 与 Key Content Paint 观察器具有显式停止 API。
+默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR、View FCP、View LCP、Soft Navigation View Paint 与 Key Content Paint 观察器具有显式停止 API。
 
 ## 2. 模块职责与生命周期
 
@@ -88,6 +92,8 @@ import {
 | `observeLCP.ts` | 适配 `web-vitals` LCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `largest-contentful-paint` |
 | `observeViewFCP.ts` | Page View 作用域的 View First Contentful Paint | 已上报 `viewId`、声明区 MutationObserver | `view-first-contentful-paint` |
 | `observeViewLCP.ts` | Page View 作用域的 View Largest Contentful Paint | 已上报 `viewId`、声明区 MutationObserver、最终确定监听与超时 | `view-largest-contentful-paint` |
+| `observeSoftNavigationViewPaint.ts` | 原生 Soft Navigation 作为 VFCP/VLCP 优先 Measurement Source | Soft Navigation 支持状态、PerformanceObserver、等待中的 viewId、VLCP 绑定 | `view-first-contentful-paint` / `view-largest-contentful-paint`（`measurementSource: soft-navigation`） |
+| `viewPaintClaim.ts` | View Paint 正式样本去重与来源优先级 | 已 claim 的 viewId、暂存的低优先级 emit、soft-nav 优先开关 | 无独立报告 |
 | `observeKeyContentPaint.ts` | Page View 作用域的 Key Content Paint | 已上报 `(viewId, name)`、按名称的 MutationObserver | `key-content-paint` |
 | `observeLoad.ts` | 测量文档加载完成 | 无；每次加载前调用添加一个一次性监听器 | `load` |
 | `observeResources.ts` | 获取一次缓冲的首屏加载资源快照 | 无；每次调用创建监听器或观察器 | `resource` |
@@ -285,12 +291,15 @@ View First Contentful Paint（VFCP）测量**当前 Page View** 从 View Start �
 - 每个 `viewId` 最多上报一次最终值；
 - 保留 Measurement Source（如何判定内容绘制）与 Start Source（如何建立 View Start）。
 
-### 6.A.1 两种 Measurement Source
+### 6.A.1 Measurement Source
 
 | API | Measurement Source | 适用 |
 | --- | --- | --- |
-| `markViewFirstContentfulPaint(onReport?)` | `application-mark` | 业务在真实内容就绪时显式标记 |
+| `observeSoftNavigationViewPaint({ onViewFCP? })` | `soft-navigation` | 浏览器完整支持 Soft Navigation 时的原生 paint（优先） |
 | `observeViewFirstContentfulPaint({ root?, onReport? })` | `declared-content` | 观察声明内容区，首个合格节点出现时上报 |
+| `markViewFirstContentfulPaint(onReport?)` | `application-mark` | 业务在真实内容就绪时显式标记 |
+
+同一 `viewId` 只产出一条正式 VFCP。启用 Soft Navigation 观察后，优先级为 `soft-navigation` > 容器观察（`declared-content`）> `application-mark`。低优先级在 soft-nav 仍可能到达时暂存，避免重复生产样本。
 
 `declared-content` 只认可带 `data-view-content` 的节点，并排除：
 
@@ -310,14 +319,14 @@ View First Contentful Paint（VFCP）测量**当前 Page View** 从 View Start �
   value: number; // 相对 View Start 的毫秒
   pageUrl: string;
   viewId: string;
-  measurementSource: "application-mark" | "declared-content";
+  measurementSource: "soft-navigation" | "application-mark" | "declared-content";
   startSource: PageViewStartSource;
   pageName?: string;
   routePattern?: string;
 }
 ```
 
-服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并。
+服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并。可用 `measurementSource` 筛选，默认按来源分列，不把 soft-navigation 与 fallback 混成一行。
 
 ## 6.B View Largest Contentful Paint：`observeViewLargestContentfulPaint`
 
@@ -327,7 +336,9 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
 - 使用独立 `subType: "view-largest-contentful-paint"`，不得与文档级 `largest-contentful-paint` 混读；
 - 候选替换只发生在本地，每个 `viewId` 最多上报一次最终值；
 - 没有合格候选时不上报，不会把 `0` 或超时时长写成样本；
-- 保留 Measurement Source（`declared-region`）、Start Source，以及最终确定原因。
+- 保留 Measurement Source（`soft-navigation` 或 `declared-region`）、Start Source，以及最终确定原因。
+
+启用 `observeSoftNavigationViewPaint({ onViewLCP? })` 且浏览器完整支持时，优先使用 Soft Navigation 的 Interaction Contentful Paint；否则使用声明区观察。同一 `viewId` 只产出一条正式 VLCP。
 
 ### 6.B.1 候选与排除
 
@@ -363,7 +374,7 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
   value: number;
   pageUrl: string;
   viewId: string;
-  measurementSource: "declared-region";
+  measurementSource: "soft-navigation" | "declared-region";
   startSource: PageViewStartSource;
   finalizationReason: "interaction" | "page-hidden" | "next-page-view" | "timeout";
   pageName?: string;
@@ -371,7 +382,39 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
 }
 ```
 
-服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 Measurement Source、Start Source 与 finalization reason。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
+服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 Measurement Source、Start Source 与 finalization reason。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并；可用 `measurementSource` 筛选 soft-navigation 与 declared-region。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
+
+## 6.A′ Soft Navigation 增强：`observeSoftNavigationViewPaint`
+
+在 Chromium Soft Navigation（约 Chrome 151+，以实际 `PerformanceObserver` 能力为准）完整可用时，可把原生 soft-navigation / interaction-contentful-paint 条目映射为当前 Page View 的 VFCP / VLCP：
+
+```ts
+import {
+  observeSoftNavigationViewPaint,
+  isSoftNavigationSupported,
+  getSoftNavigationSupport,
+} from "frontend-moniter-sdk";
+
+observeSoftNavigationViewPaint({
+  onViewFCP(report) {
+    console.log(report.measurementSource, report.value, report.startSource);
+  },
+  onViewLCP(report) {
+    console.log(report.measurementSource, report.finalizationReason);
+  },
+});
+
+if (!isSoftNavigationSupported()) {
+  // 不支持 / 部分支持 / observe 失败：继续用 declared-* 或 application-mark
+  console.log(getSoftNavigationSupport());
+}
+```
+
+关联规则：soft-navigation 条目的 `name`（URL）与活动 Page View 的脱敏 `pageUrl` 一致，且条目 `startTime` 不早于 View Start。`value` 始终相对 Page View 的 View Start；Measurement Source（`soft-navigation`）与 Start Source（如路由 `navigation`）相互独立。
+
+启用 soft-navigation 优先后，低优先级来源会暂存；若在 `softNavWait`（默认 3s）内没有原生样本，或下一个 Page View 到来，则释放回退样本，避免无限阻塞。
+
+兼容性：缺少 `PerformanceObserver`、`supportedEntryTypes` 不含 `soft-navigation` / `interaction-contentful-paint`、或 `observe()` 抛错时，状态为 unsupported，不抛错，现有来源继续工作。这不是对所有浏览器的 Core Web Vitals soft-nav 覆盖；真实浏览器请在支持 Soft Navigation 的 Chromium 中用 Vue demo「Soft Navigation 优先」验证，并在 platform 用来源筛选核对样本。
 
 ## 6.C Key Content Paint：`markKeyContentPaint` / `observeKeyContentPaint`
 

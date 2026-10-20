@@ -4,21 +4,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     failResource,
+    probeSoftNavigationViewPaintSupport,
     pushHistoryRoute,
     requestWithFetch,
     requestWithXHR,
     runKeyContentPaintScenario,
     runSkeletonToContentScenario,
+    runSoftNavigationViewPaintScenario,
     runViewLargestContentfulPaintScenario,
+    stopSoftNavigationViewPaintDemo,
     switchRoute,
 } from "../demo/src/scenarios.js";
 import { stopObserveBehavior } from "../src/behavior/index.js";
 import { resetKeyContentPaint } from "../src/performance/observeKeyContentPaint.js";
+import { resetSoftNavigationViewPaint } from "../src/performance/observeSoftNavigationViewPaint.js";
 import { resetViewFirstContentfulPaint } from "../src/performance/observeViewFCP.js";
 import { resetViewLargestContentfulPaint } from "../src/performance/observeViewLCP.js";
 
 describe("demo monitoring scenarios", () => {
     afterEach(() => {
+        stopSoftNavigationViewPaintDemo();
+        resetSoftNavigationViewPaint();
         resetViewFirstContentfulPaint();
         resetViewLargestContentfulPaint();
         resetKeyContentPaint();
@@ -149,6 +155,21 @@ describe("demo monitoring scenarios", () => {
 
         scenario.dispose();
         unsubscribe();
+    });
+
+    it("probes Soft Navigation support and can start a soft-navigation Page View scenario", () => {
+        window.history.replaceState({}, "", "/demo");
+        const support = probeSoftNavigationViewPaintSupport();
+        expect(support.status).toEqual(
+            expect.objectContaining({
+                status: expect.stringMatching(/supported|unsupported/),
+            }),
+        );
+        stopSoftNavigationViewPaintDemo();
+
+        const scenarioSupport = runSoftNavigationViewPaintScenario();
+        expect(window.location.hash).toContain("/scenario/soft-navigation");
+        expect(scenarioSupport.supported).toBe(support.supported);
     });
 
     it("shows candidate replacement and a larger excluded region before one view LCP report", async () => {

@@ -147,6 +147,93 @@ describe("view paint metric aggregation", () => {
     ]);
   });
 
+  it("keeps soft-navigation and fallback VFCP sources separate and filterable", () => {
+    const rows = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 120,
+          pageName: "product-detail",
+          measurementSource: "soft-navigation",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 2,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/products/2",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 220,
+          pageName: "product-detail",
+          measurementSource: "declared-content",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 3,
+        timestamp: 3_000,
+        pageUrl: "https://example.test/products/3",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 320,
+          pageName: "product-detail",
+          measurementSource: "application-mark",
+          startSource: "manual",
+        },
+      },
+    ];
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-first-contentful-paint"],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        sampleCount: 3,
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            measurementSource: "soft-navigation",
+            startSource: "navigation",
+            sampleCount: 1,
+            p50: null,
+          }),
+          expect.objectContaining({
+            measurementSource: "declared-content",
+            sampleCount: 1,
+          }),
+          expect.objectContaining({
+            measurementSource: "application-mark",
+            sampleCount: 1,
+          }),
+        ]),
+      }),
+    ]);
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-first-contentful-paint"],
+        measurementSource: "soft-navigation",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        sampleCount: 1,
+        sources: [
+          expect.objectContaining({
+            measurementSource: "soft-navigation",
+            startSource: "navigation",
+            sampleCount: 1,
+          }),
+        ],
+      }),
+    ]);
+  });
+
   it("ingests VFCP over HTTP and returns page-oriented query results", async () => {
     const databasePath = `/tmp/view-paint-${Date.now()}-${Math.random()}.sqlite`;
     databases.push(databasePath);

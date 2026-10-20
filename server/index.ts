@@ -521,11 +521,14 @@ export function createReportServer(
                     .filter(Boolean) as ViewPaintMetricName[];
                 const keyContentName =
                     url.searchParams.get("keyContentName") ?? undefined;
+                const measurementSource =
+                    url.searchParams.get("measurementSource") ?? undefined;
                 sendJson(response, 200, {
                     metrics: store.viewPaintMetrics({
                         ...performanceQuery,
                         metrics: metricNames.length ? metricNames : undefined,
                         keyContentName,
+                        measurementSource,
                     }),
                 }, headers);
                 return;

@@ -14,9 +14,12 @@ import {
     rejectPromise,
     requestWithFetch,
     requestWithXHR,
+    probeSoftNavigationViewPaintSupport,
     runKeyContentPaintScenario,
     runSkeletonToContentScenario,
+    runSoftNavigationViewPaintScenario,
     runViewLargestContentfulPaintScenario,
+    stopSoftNavigationViewPaintDemo,
     switchRoute,
     throwJavaScriptError,
     type KeyContentPaintScenario,
@@ -29,6 +32,7 @@ const unmarkedComparisonMessage = ref("");
 const viewFcpStatus = ref("");
 const viewLcpStatus = ref("");
 const keyContentStatus = ref("");
+const softNavStatus = ref("");
 let activeViewFcpScenario: SkeletonToContentResult | undefined;
 let activeViewLcpScenario: ViewLargestContentfulPaintScenario | undefined;
 let activeKeyContentScenario: KeyContentPaintScenario | undefined;
@@ -49,6 +53,7 @@ const VueErrorScenario = defineComponent({
 
 onBeforeUnmount(() => {
     stopReplayRecording();
+    stopSoftNavigationViewPaintDemo();
     activeViewFcpScenario?.dispose();
     activeViewFcpScenario = undefined;
     activeViewLcpScenario?.dispose();
@@ -56,7 +61,24 @@ onBeforeUnmount(() => {
     activeKeyContentScenario?.dispose();
     activeKeyContentScenario = undefined;
 });
-onMounted(startReplayRecording);
+onMounted(() => {
+    startReplayRecording();
+    const support = probeSoftNavigationViewPaintSupport();
+    // 仅探测支持度；不把 soft-navigation 优先态留在整个 demo 会话里，避免阻断 fallback 按钮。
+    stopSoftNavigationViewPaintDemo();
+    softNavStatus.value = support.supported
+        ? "浏览器完整支持 Soft Navigation。点击「Soft Navigation 优先」启用原生 Measurement Source（不宣称通用 Core Web Vitals 覆盖）。"
+        : `当前环境未完整支持 Soft Navigation（${support.status.status === "unsupported" ? support.status.reason : "unknown"}），继续使用 declared-content / application-mark。`;
+});
+
+function runSoftNavScenario(): void {
+    activeViewFcpScenario?.dispose();
+    activeViewFcpScenario = undefined;
+    const support = runSoftNavigationViewPaintScenario();
+    softNavStatus.value = support.supported
+        ? "已提交 soft-navigation Page View，并观察原生 soft-navigation 条目。选中来源为 soft-navigation（若浏览器产出条目）；与 fallback 样本默认分开查看。"
+        : `已提交 Page View，但 Soft Navigation 不可用（${support.status.status === "unsupported" ? support.status.reason : "unknown"}）。请改用 Skeleton → declared-content / application-mark。`;
+}
 
 function triggerVueError(): void {
     showVueError.value = true;
@@ -69,6 +91,7 @@ function acknowledgeUnmarkedClick(): void {
 function runViewFcpScenario(
     mode: "declared-content" | "application-mark",
 ): void {
+    stopSoftNavigationViewPaintDemo();
     activeViewFcpScenario?.dispose();
     viewFcpStatus.value =
         mode === "declared-content"
@@ -254,9 +277,17 @@ function runKeyContentScenario(): void {
                 <p class="section-note">
                     先提交 delayed-content Page View，再展示 skeleton（不计为 VFCP），延迟后换成真实内容。declared-content 依赖
                     <code>data-view-content</code>；application-mark 由业务在内容就绪时调用
-                    <code>markViewFirstContentfulPaint</code>。二者与文档级 FCP 相互独立。
+                    <code>markViewFirstContentfulPaint</code>。启用 Soft Navigation 时优先级为
+                    <code>soft-navigation</code> &gt; 容器观察 &gt; <code>application-mark</code>，与文档级 FCP 相互独立，也不宣称通用 Core Web Vitals 覆盖。
                 </p>
                 <div class="scenario-grid">
+                    <button
+                        type="button"
+                        clstag="view-fcp-soft-navigation"
+                        @click="runSoftNavScenario"
+                    >
+                        Soft Navigation 优先
+                    </button>
                     <button
                         type="button"
                         clstag="view-fcp-declared-content"
@@ -272,6 +303,9 @@ function runKeyContentScenario(): void {
                         Skeleton → application-mark
                     </button>
                 </div>
+                <p v-if="softNavStatus" class="section-note" role="status">
+                    {{ softNavStatus }}
+                </p>
                 <p v-if="viewFcpStatus" class="section-note" role="status">
                     {{ viewFcpStatus }}
                 </p>

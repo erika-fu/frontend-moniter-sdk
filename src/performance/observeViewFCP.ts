@@ -3,11 +3,18 @@ import {
     type PageViewStartSource,
 } from "../behavior/pv.js";
 import { dispatchReport } from "../report.js";
+import {
+    hasClaimedViewPaint,
+    resetViewPaintClaims,
+    toViewPaintSourcePriority,
+    tryEmitViewPaint,
+} from "./viewPaintClaim.js";
 
 /**
  * 判定 View Paint 内容绘制时刻的机制。
  */
 export type ViewPaintMeasurementSource =
+    | "soft-navigation"
     | "application-mark"
     | "declared-content";
 
@@ -33,8 +40,6 @@ export type ViewFirstContentfulPaintReportHandler = (
     reportData: ViewFirstContentfulPaintReportData,
 ) => void;
 
-const reportedViewIds = new Set<string>();
-
 let declaredObserver: MutationObserver | undefined;
 let declaredRoot: Element | undefined;
 let declaredOnReport: ViewFirstContentfulPaintReportHandler | undefined;
@@ -57,12 +62,12 @@ export function stopObserveViewFirstContentfulPaint(): void {
  * 清除已上报的 viewId 集合并停止观察（测试与完整重启）。
  */
 export function resetViewFirstContentfulPaint(): void {
-    reportedViewIds.clear();
+    resetViewPaintClaims("view-first-contentful-paint");
     disconnectDeclaredObserver();
 }
 
 function emitViewFCP(
-    measurementSource: ViewPaintMeasurementSource,
+    measurementSource: Exclude<ViewPaintMeasurementSource, "soft-navigation">,
     onReport?: ViewFirstContentfulPaintReportHandler,
 ): boolean {
     if (
@@ -74,7 +79,7 @@ function emitViewFCP(
     }
 
     const pageView = getActivePageView();
-    if (!pageView || reportedViewIds.has(pageView.viewId)) {
+    if (!pageView || hasClaimedViewPaint("view-first-contentful-paint", pageView.viewId)) {
         return false;
     }
 
@@ -83,7 +88,6 @@ function emitViewFCP(
         return false;
     }
 
-    reportedViewIds.add(pageView.viewId);
     const reportData: ViewFirstContentfulPaintReportData = {
         type: "performance",
         subType: "view-first-contentful-paint",
@@ -100,8 +104,14 @@ function emitViewFCP(
             ? { routePattern: pageView.routePattern }
             : {}),
     };
-    dispatchReport(reportData, onReport);
-    return true;
+    return tryEmitViewPaint(
+        "view-first-contentful-paint",
+        pageView.viewId,
+        toViewPaintSourcePriority(measurementSource),
+        () => {
+            dispatchReport(reportData, onReport);
+        },
+    );
 }
 
 /**
@@ -146,13 +156,28 @@ function scanDeclaredContent(): void {
     if (!declaredRoot) {
         return;
     }
+    const pageView = getActivePageView();
+    if (
+        pageView &&
+        hasClaimedViewPaint("view-first-contentful-paint", pageView.viewId)
+    ) {
+        disconnectDeclaredObserver();
+        return;
+    }
     const candidates = [
         declaredRoot,
         ...declaredRoot.querySelectorAll("[data-view-content]"),
     ];
     for (const candidate of candidates) {
         if (isMeaningfulDeclaredContent(candidate)) {
-            if (emitViewFCP("declared-content", declaredOnReport)) {
+            emitViewFCP("declared-content", declaredOnReport);
+            if (
+                pageView &&
+                hasClaimedViewPaint(
+                    "view-first-contentful-paint",
+                    pageView.viewId,
+                )
+            ) {
                 disconnectDeclaredObserver();
             }
             return;
@@ -198,12 +223,15 @@ export function observeViewFirstContentfulPaint(
     declaredOnReport = options.onReport;
 
     const pageView = getActivePageView();
-    if (!pageView || reportedViewIds.has(pageView.viewId)) {
+    if (
+        !pageView ||
+        hasClaimedViewPaint("view-first-contentful-paint", pageView.viewId)
+    ) {
         return;
     }
 
     scanDeclaredContent();
-    if (!reportedViewIds.has(pageView.viewId)) {
+    if (!hasClaimedViewPaint("view-first-contentful-paint", pageView.viewId)) {
         declaredObserver = new MutationObserver(() => {
             scanDeclaredContent();
         });

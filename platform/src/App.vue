@@ -200,6 +200,8 @@ const performanceMinDuration = ref("");
 const performanceMaxDuration = ref("");
 const performancePage = ref(1);
 const performanceLoading = ref(false);
+/** View Paint Measurement Source 筛选；默认空=全部，不把 soft-navigation 与 fallback 混成一行。 */
+const viewPaintMeasurementSource = ref("");
 const loading = ref(true);
 const error = ref("");
 const refreshingEvents = ref(false);
@@ -346,9 +348,20 @@ async function loadPerformance(): Promise<void> {
   listQuery.set("page", String(performancePage.value));
   listQuery.set("pageSize", "10");
   try {
+    const viewPaintQuery = new URLSearchParams(query);
+    viewPaintQuery.set(
+      "metrics",
+      "view-first-contentful-paint,view-largest-contentful-paint,key-content-paint",
+    );
+    if (viewPaintMeasurementSource.value.trim()) {
+      viewPaintQuery.set(
+        "measurementSource",
+        viewPaintMeasurementSource.value.trim(),
+      );
+    }
     const [metricsResponse, viewPaintResponse, requestsResponse, resourcesResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
-      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint,view-largest-contentful-paint,key-content-paint`),
+      fetch(`${apiUrl}/api/v1/performance/view-paint?${viewPaintQuery}`),
       fetch(`${apiUrl}/api/v1/performance/requests?${listQuery}`),
       fetch(`${apiUrl}/api/v1/performance/resources?${listQuery}`),
     ]);
@@ -597,7 +610,7 @@ watch([selectedAppId, from, to, selectedType], () => {
 });
 watch([selectedAppId, from, to, performanceKeyword, performanceResourceType, performancePageUrl,
   performanceStatus, performanceSort, performanceOrder, performanceMinDuration, performanceMaxDuration,
-  performancePage], () => {
+  performancePage, viewPaintMeasurementSource], () => {
   if (apps.value.length > 0 && view.value === "performance") void loadPerformance();
 });
 watch([selectedAppId, from, to, errorStatus, errorSubType, errorSearch, errorPage], () => {
@@ -740,7 +753,18 @@ onUnmounted(() => {
             <h2 id="view-paint-title">View Paint</h2>
           </div>
         </div>
-        <p class="result-count">相对 Page View 的 View Start。VFCP 与文档级 FCP 分开，VLCP 与文档级 LCP 分开；聚合键优先 Page Name，否则 Route Pattern。</p>
+        <p class="result-count">相对 Page View 的 View Start。VFCP 与文档级 FCP 分开，VLCP 与文档级 LCP 分开；聚合键优先 Page Name，否则 Route Pattern。Measurement Source（含 soft-navigation）与 Start Source 分列展示，默认不把原生与 fallback 混成一行。浏览器 Soft Navigation 能力由 demo 探测；此处用 Measurement Source 筛选查看所选来源（不宣称通用 Core Web Vitals 覆盖）。</p>
+        <div class="filters performance-filters">
+          <label>View Paint Measurement Source
+            <select v-model="viewPaintMeasurementSource">
+              <option value="">全部来源（分列）</option>
+              <option value="soft-navigation">soft-navigation</option>
+              <option value="declared-content">declared-content</option>
+              <option value="declared-region">declared-region</option>
+              <option value="application-mark">application-mark</option>
+            </select>
+          </label>
+        </div>
         <div class="summary-grid">
           <article v-for="metric in viewPaintCore" :key="metric.metric" class="metric">
             <span>{{ viewPaintLabel(metric.metric) }} · {{ metric.sampleCount }} 个样本</span>

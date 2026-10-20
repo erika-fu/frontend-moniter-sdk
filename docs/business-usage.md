@@ -472,21 +472,28 @@ router.afterEach((to) => {
 import {
   markViewFirstContentfulPaint,
   observeViewFirstContentfulPaint,
+  observeSoftNavigationViewPaint,
+  isSoftNavigationSupported,
 } from "frontend-moniter-sdk";
 
-// 方式 A：业务在数据渲染完成后显式标记
+// 方式 0（渐进增强）：完整支持 Soft Navigation 时优先原生 Measurement Source
+observeSoftNavigationViewPaint();
+if (!isSoftNavigationSupported()) {
+  // 方式 A：业务在数据渲染完成后显式标记
+  // 方式 B：声明内容区
+}
+
 async function showProduct(id: string) {
   const product = await fetchProduct(id);
   renderProduct(product);
   markViewFirstContentfulPaint();
 }
 
-// 方式 B：声明内容区，首个 data-view-content 节点计入
 observeViewFirstContentfulPaint({ root: "#page-main" });
 // 模板中：skeleton 使用 data-view-skeleton；真实内容使用 data-view-content
 ```
 
-选择建议：路由组件能明确知道「主内容已就绪」时用 application-mark；希望 DOM 观察驱动时用 declared-content，并保证 skeleton / spinner / placeholder 带上排除属性。Vue demo 的「Skeleton → …」按钮可复现延迟内容场景。字段与边界见 [Performance](performance.md) 第 6.A 节。
+选择建议：支持 Soft Navigation 时先开 `observeSoftNavigationViewPaint()`（优先级 soft-navigation > declared-content > application-mark）；路由组件能明确知道「主内容已就绪」时用 application-mark；希望 DOM 观察驱动时用 declared-content。Vue demo 的「Soft Navigation 优先」与「Skeleton → …」可分别验证原生来源与回退。字段与边界见 [Performance](performance.md) 第 6.A / 6.A′ 节。不宣称通用 Core Web Vitals soft-nav 覆盖。
 
 ### 11.3.2 View Largest Contentful Paint
 

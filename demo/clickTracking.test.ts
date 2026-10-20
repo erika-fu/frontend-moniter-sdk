@@ -74,6 +74,7 @@ describe("Vue demo click markers", () => {
             "commit-navigation-attempt-orders",
             "cancel-navigation-attempt",
             "commit-redirect-navigation-orders",
+            "view-fcp-soft-navigation",
             "view-fcp-declared-content",
             "view-fcp-application-mark",
             "view-lcp-candidate-replacement",

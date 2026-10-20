@@ -60,6 +60,11 @@ export interface ViewPaintMetricQuery extends PerformanceFilter {
     metrics?: ViewPaintMetricName[] | undefined;
     /** 仅 Key Content Paint：按关键内容名称过滤。 */
     keyContentName?: string | undefined;
+    /**
+     * 按 Measurement Source 过滤（如 `soft-navigation`）。
+     * 默认不合并不同来源；筛选后仍按来源维度单独展示。
+     */
+    measurementSource?: string | undefined;
 }
 
 export interface ViewPaintMetricPoint {
@@ -277,6 +282,11 @@ export function summarizeViewPaintMetrics(
         typeof query.keyContentName === "string" && query.keyContentName.trim()
             ? query.keyContentName.trim()
             : undefined;
+    const measurementSourceFilter =
+        typeof query.measurementSource === "string" &&
+        query.measurementSource.trim()
+            ? query.measurementSource.trim()
+            : undefined;
 
     return requested.map((metric) => {
         const samples = rows.flatMap((row) => {
@@ -290,6 +300,15 @@ export function summarizeViewPaintMetrics(
                         ? row.data.keyContentName
                         : "";
                 if (name !== keyContentFilter) {
+                    return [];
+                }
+            }
+            if (measurementSourceFilter) {
+                const source =
+                    typeof row.data.measurementSource === "string"
+                        ? row.data.measurementSource
+                        : "";
+                if (source !== measurementSourceFilter) {
                     return [];
                 }
             }

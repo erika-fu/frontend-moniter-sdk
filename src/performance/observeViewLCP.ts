@@ -4,6 +4,12 @@ import {
     type PageViewStartSource,
 } from "../behavior/pv.js";
 import { dispatchReport } from "../report.js";
+import {
+    hasClaimedViewPaint,
+    resetViewPaintClaims,
+    toViewPaintSourcePriority,
+    tryEmitViewPaint,
+} from "./viewPaintClaim.js";
 
 /**
  * 结束 View Largest Contentful Paint 观察的原因。
@@ -19,7 +25,9 @@ export type ViewLargestContentfulPaintFinalizationReason =
 /**
  * 判定 View Largest Contentful Paint 绘制时刻的机制。
  */
-export type ViewLargestContentfulPaintMeasurementSource = "declared-region";
+export type ViewLargestContentfulPaintMeasurementSource =
+    | "soft-navigation"
+    | "declared-region";
 
 /**
  * View Largest Contentful Paint 上报数据。
@@ -69,8 +77,6 @@ const NON_CONTENT_SELECTOR = [
     "[data-view-placeholder]",
     "[data-view-spinner]",
 ].join(",");
-
-const reportedViewIds = new Set<string>();
 
 interface BoundView {
     viewId: string;
@@ -135,7 +141,7 @@ export function stopObserveViewLargestContentfulPaint(): void {
  * 清除已上报的 viewId 集合并停止观察（测试与完整重启）。
  */
 export function resetViewLargestContentfulPaint(): void {
-    reportedViewIds.clear();
+    resetViewPaintClaims("view-largest-contentful-paint");
     disconnectObservation();
 }
 
@@ -223,7 +229,10 @@ function scanCandidates(): void {
 function finalize(
     reason: ViewLargestContentfulPaintFinalizationReason,
 ): void {
-    if (!boundView || reportedViewIds.has(boundView.viewId)) {
+    if (
+        !boundView ||
+        hasClaimedViewPaint("view-largest-contentful-paint", boundView.viewId)
+    ) {
         disconnectObservation();
         return;
     }
@@ -237,7 +246,6 @@ function finalize(
         return;
     }
 
-    reportedViewIds.add(boundView.viewId);
     const reportData: ViewLargestContentfulPaintReportData = {
         type: "performance",
         subType: "view-largest-contentful-paint",
@@ -256,8 +264,16 @@ function finalize(
             : {}),
     };
     const handler = declaredOnReport;
+    const viewId = boundView.viewId;
     disconnectObservation();
-    dispatchReport(reportData, handler);
+    tryEmitViewPaint(
+        "view-largest-contentful-paint",
+        viewId,
+        toViewPaintSourcePriority("declared-region"),
+        () => {
+            dispatchReport(reportData, handler);
+        },
+    );
 }
 
 function onTrustedInteraction(event: Event): void {
@@ -312,7 +328,10 @@ export function observeViewLargestContentfulPaint(
     disconnectObservation();
 
     const pageView = getActivePageView();
-    if (!pageView || reportedViewIds.has(pageView.viewId)) {
+    if (
+        !pageView ||
+        hasClaimedViewPaint("view-largest-contentful-paint", pageView.viewId)
+    ) {
         return;
     }
 
