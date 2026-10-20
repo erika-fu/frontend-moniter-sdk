@@ -620,6 +620,7 @@ monitor.subscribe((data) => {
 4. 连续相同脱敏 URL 被跳过是否符合预期；
 5. 关闭 `autoPageView` 后是否仍有业务侧 Attempt / `observePV()`；
 6. `pageUrl` 是否仍含敏感 query（应被剥离）；聚合是否误用完整 URL 而非 `pageName` / `routePattern`。
+7. platform `/performance/view-paint` 是否按预期展示 Metric Coverage、scope（document 投影 vs view）与来源组成；缺失漆面是否保持缺席而不是变成 0。
 
 ## 12. 停止监听
 

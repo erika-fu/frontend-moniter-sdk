@@ -9,6 +9,7 @@ import {
 import {
     summarizeMetrics,
     summarizeViewPaintMetrics,
+    type PageViewEventRow,
     type PerformanceEventRow,
     type PerformanceFilter,
     type PerformanceListResult,
@@ -952,12 +953,13 @@ export class SQLiteReportStore {
         return { total: result.total, byType: rows };
     }
 
-    private performanceEvents(
+    private filteredEvents(
         query: PerformanceFilter,
+        type: string,
         subTypes?: string[],
-    ): PerformanceEventRow[] {
-        const conditions = ["type = 'performance'"];
-        const parameters: Array<string | number> = [];
+    ): Array<PerformanceEventRow & { data: Record<string, unknown> }> {
+        const conditions = ["type = ?"];
+        const parameters: Array<string | number> = [type];
         if (query.appId) {
             conditions.push("app_id = ?");
             parameters.push(query.appId);
@@ -990,12 +992,24 @@ export class SQLiteReportStore {
             })
             .filter((row) => {
                 if (query.pageUrl && row.pageUrl !== query.pageUrl) return false;
+                if (type !== "performance") return true;
                 if (query.minDuration === undefined && query.maxDuration === undefined) return true;
                 const duration = typeof row.data.duration === "number" ? row.data.duration : undefined;
                 return duration !== undefined &&
                     (query.minDuration === undefined || duration >= query.minDuration) &&
                     (query.maxDuration === undefined || duration <= query.maxDuration);
             });
+    }
+
+    private performanceEvents(
+        query: PerformanceFilter,
+        subTypes?: string[],
+    ): PerformanceEventRow[] {
+        return this.filteredEvents(query, "performance", subTypes);
+    }
+
+    private pageViewEvents(query: PerformanceFilter): PageViewEventRow[] {
+        return this.filteredEvents(query, "behavior", ["pv"]);
     }
 
     performanceMetrics(query: PerformanceMetricQuery): PerformanceMetricPoint[] {
@@ -1008,8 +1022,11 @@ export class SQLiteReportStore {
                 "view-first-contentful-paint",
                 "view-largest-contentful-paint",
                 "key-content-paint",
+                "first-contentful-paint",
+                "largest-contentful-paint",
             ]),
             query,
+            this.pageViewEvents(query),
         );
     }
 

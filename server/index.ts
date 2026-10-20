@@ -523,12 +523,21 @@ export function createReportServer(
                     url.searchParams.get("keyContentName") ?? undefined;
                 const measurementSource =
                     url.searchParams.get("measurementSource") ?? undefined;
+                const startSource =
+                    url.searchParams.get("startSource") ?? undefined;
+                const scopeParam = url.searchParams.get("scope");
+                const scope =
+                    scopeParam === "document" || scopeParam === "view"
+                        ? scopeParam
+                        : undefined;
                 sendJson(response, 200, {
                     metrics: store.viewPaintMetrics({
                         ...performanceQuery,
                         metrics: metricNames.length ? metricNames : undefined,
                         keyContentName,
                         measurementSource,
+                        startSource,
+                        scope,
                     }),
                 }, headers);
                 return;

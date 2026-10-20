@@ -6,7 +6,7 @@
 
 `src/index.ts` 导出 `SDK_NAME`、`init`、`subscribe`、performance/behavior/error/replay 模块入口、细粒度观察器、框架错误入口和 report 工具。
 
-默认对象提供 `performance`、`behavior`、`error`、`replay` 四个启动入口，并公开 `createReplayUrl`、`getReplaySession`、`stopObserveReplay`。为了兼容需要显式命名的调用方式，默认对象还提供 `observePerformance`、`observeBehavior`、`observeError`、`observeReplay`；更细的观察器继续通过包根命名导出。
+默认对象提供 `performance`、`behavior`、`error`、`replay` 四个启动入口，并公开 `createReplayUrl`、`getReplaySession`、`stopObserveReplay`。为了兼容需要显式命名的调用方式，默认对象还提供 `observePerformance`、`observeBehavior`、`observeError`、`observeReplay`；更细的观察器继续通过包根命名导出。View Paint（VFCP / VLCP / Key Content Paint / Soft Navigation）与文档级 paint 共用统一分发，但报告 `subType` 与服务端查询作用域分离；分析侧的文档投影与 Metric Coverage 见 [Performance](performance.md) 与 [Server](server.md)。
 
 `SDKOptions` 等于 `ReportConfigOptions`。`init(options = {})` 只调用 `setConfig`，不会安装监听器；启动模块时才检查浏览器能力，因此初始化本身可以在 SSR 代码中执行。
 

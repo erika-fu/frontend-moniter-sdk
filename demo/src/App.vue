@@ -196,7 +196,7 @@ function runKeyContentScenario(): void {
                     </div>
                 </div>
                 <p class="section-note">
-                    只有携带 clstag 标记的控件才会产生行为点击上报。未标记对照可以点击，但不会产生点击上报。Hash / History 切换走自动 PV（较低保真，带 startSource）。手动 Attempt 演示框架在守卫通过后提交 Page View，取消则不上报。敏感 query（如 token）会从 pageUrl 中剥离。
+                    只有携带 clstag 标记的控件才会产生行为点击上报。未标记对照可以点击，但不会产生点击上报。Hash / History 切换走自动 PV（较低保真，带 startSource）。手动 Attempt 演示框架在守卫通过后提交 Page View，取消则不上报。敏感 query（如 token）会从 pageUrl 中剥离。完整分析链路：本页场景产生 Page View 与 View Paint → server 投影初始文档 FCP/LCP（scope=document）并计算 Metric Coverage → platform 性能页按 Page Name 聚合、筛选 scope / Measurement Source。
                 </p>
                 <div class="scenario-grid">
                     <button

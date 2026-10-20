@@ -35,14 +35,24 @@ interface PerformanceMetric {
 interface ViewPaintMetric {
   metric: "view-first-contentful-paint" | "view-largest-contentful-paint" | "key-content-paint";
   sampleCount: number;
+  measurablePageViewCount: number;
+  metricCoverage: number | null;
   p50: number | null;
   p75: number | null;
   p95: number | null;
   pages: Array<{ pageKey: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
   sources: Array<{
+    scope: "document" | "view";
     measurementSource: string;
     startSource: string;
     finalizationReason: string;
+    sampleCount: number;
+    p50: number | null;
+    p75: number | null;
+    p95: number | null;
+  }>;
+  scopes: Array<{
+    scope: "document" | "view";
     sampleCount: number;
     p50: number | null;
     p75: number | null;
@@ -202,6 +212,7 @@ const performancePage = ref(1);
 const performanceLoading = ref(false);
 /** View Paint Measurement Source 筛选；默认空=全部，不把 soft-navigation 与 fallback 混成一行。 */
 const viewPaintMeasurementSource = ref("");
+const viewPaintScope = ref<"" | "document" | "view">("");
 const loading = ref(true);
 const error = ref("");
 const refreshingEvents = ref(false);
@@ -359,6 +370,9 @@ async function loadPerformance(): Promise<void> {
         viewPaintMeasurementSource.value.trim(),
       );
     }
+    if (viewPaintScope.value) {
+      viewPaintQuery.set("scope", viewPaintScope.value);
+    }
     const [metricsResponse, viewPaintResponse, requestsResponse, resourcesResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
       fetch(`${apiUrl}/api/v1/performance/view-paint?${viewPaintQuery}`),
@@ -405,6 +419,11 @@ const keyContentPaint = computed(() =>
 
 function duration(value: number | null): string {
   return value === null ? "-" : `${Math.round(value)} ms`;
+}
+
+function formatMetricCoverage(value: number | null): string {
+  if (value === null) return "-";
+  return `${Math.round(value * 1000) / 10}%`;
 }
 
 async function loadSourceMaps(): Promise<void> {
@@ -610,7 +629,7 @@ watch([selectedAppId, from, to, selectedType], () => {
 });
 watch([selectedAppId, from, to, performanceKeyword, performanceResourceType, performancePageUrl,
   performanceStatus, performanceSort, performanceOrder, performanceMinDuration, performanceMaxDuration,
-  performancePage, viewPaintMeasurementSource], () => {
+  performancePage, viewPaintMeasurementSource, viewPaintScope], () => {
   if (apps.value.length > 0 && view.value === "performance") void loadPerformance();
 });
 watch([selectedAppId, from, to, errorStatus, errorSubType, errorSearch, errorPage], () => {
@@ -753,11 +772,19 @@ onUnmounted(() => {
             <h2 id="view-paint-title">View Paint</h2>
           </div>
         </div>
-        <p class="result-count">相对 Page View 的 View Start。VFCP 与文档级 FCP 分开，VLCP 与文档级 LCP 分开；聚合键优先 Page Name，否则 Route Pattern。Measurement Source（含 soft-navigation）与 Start Source 分列展示，默认不把原生与 fallback 混成一行。浏览器 Soft Navigation 能力由 demo 探测；此处用 Measurement Source 筛选查看所选来源（不宣称通用 Core Web Vitals 覆盖）。</p>
+        <p class="result-count">相对 Page View 的 View Start。文档级 FCP/LCP 可投影到初始 Page View（scope=document），客户端 View Paint 保留 scope=view；默认顶层百分位与 Metric Coverage 只统计 view，不把不同 scope 混算。聚合键优先 Page Name，否则 Route Pattern；Page URL 仅用于单次诊断。Metric Coverage = 有效样本 / 可测 Page View，缺失测量不会变成 0。不套用 Core Web Vitals 好坏评级。</p>
         <div class="filters performance-filters">
+          <label>Scope
+            <select v-model="viewPaintScope">
+              <option value="">默认（顶层=view，组成含 document）</option>
+              <option value="view">view（客户端）</option>
+              <option value="document">document（文档投影）</option>
+            </select>
+          </label>
           <label>View Paint Measurement Source
             <select v-model="viewPaintMeasurementSource">
               <option value="">全部来源（分列）</option>
+              <option value="document">document</option>
               <option value="soft-navigation">soft-navigation</option>
               <option value="declared-content">declared-content</option>
               <option value="declared-region">declared-region</option>
@@ -770,6 +797,7 @@ onUnmounted(() => {
             <span>{{ viewPaintLabel(metric.metric) }} · {{ metric.sampleCount }} 个样本</span>
             <strong>{{ duration(metric.p50) }}</strong>
             <small>P75 {{ duration(metric.p75) }} · P95 {{ duration(metric.p95) }}</small>
+            <small>Metric Coverage {{ formatMetricCoverage(metric.metricCoverage) }} · 可测 Page View {{ metric.measurablePageViewCount ?? 0 }}</small>
           </article>
         </div>
         <div class="performance-grid">
@@ -784,12 +812,13 @@ onUnmounted(() => {
             </ol>
           </article>
           <article v-for="metric in viewPaintCore" :key="`${metric.metric}-sources`" class="performance-panel">
-            <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 来源与最终确定</h3></div>
+            <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 来源组成</h3></div>
             <p v-if="!metric.sources.length" class="state">暂无来源维度</p>
             <table v-else>
-              <thead><tr><th>Measurement</th><th>Start</th><th>Finalization</th><th>样本</th><th>P50</th></tr></thead>
+              <thead><tr><th>Scope</th><th>Measurement</th><th>Start</th><th>Finalization</th><th>样本</th><th>P50</th></tr></thead>
               <tbody>
-                <tr v-for="source in metric.sources" :key="`${metric.metric}-${source.measurementSource}-${source.startSource}-${source.finalizationReason}`">
+                <tr v-for="source in metric.sources" :key="`${metric.metric}-${source.scope}-${source.measurementSource}-${source.startSource}-${source.finalizationReason}`">
+                  <td>{{ source.scope }}</td>
                   <td>{{ source.measurementSource }}</td>
                   <td>{{ source.startSource }}</td>
                   <td>{{ source.finalizationReason || "—" }}</td>
@@ -808,12 +837,13 @@ onUnmounted(() => {
             <h2 id="key-content-paint-title">Key Content Paint</h2>
           </div>
         </div>
-        <p class="result-count">应用声明的任务关键内容可见耗时。它不是标准 Web Vital，也不是 View Largest Contentful Paint；按关键内容名称与 Page Name（或 Route Pattern）聚合。</p>
+        <p class="result-count">应用声明的任务关键内容可见耗时。它不是标准 Web Vital，也不是 View Largest Contentful Paint；按关键内容名称与 Page Name（或 Route Pattern）聚合，并展示 Metric Coverage。</p>
         <div class="summary-grid">
           <article class="metric">
             <span>Key Content Paint · {{ keyContentPaint?.sampleCount ?? 0 }} 个样本</span>
             <strong>{{ duration(keyContentPaint?.p50 ?? null) }}</strong>
             <small>P75 {{ duration(keyContentPaint?.p75 ?? null) }} · P95 {{ duration(keyContentPaint?.p95 ?? null) }}</small>
+            <small>Metric Coverage {{ formatMetricCoverage(keyContentPaint?.metricCoverage ?? null) }} · 可测 Page View {{ keyContentPaint?.measurablePageViewCount ?? 0 }}</small>
           </article>
         </div>
         <div class="performance-grid">
@@ -838,12 +868,13 @@ onUnmounted(() => {
             </ol>
           </article>
           <article class="performance-panel">
-            <div class="section-heading"><h3>Measurement / Start Source</h3></div>
+            <div class="section-heading"><h3>Scope / Measurement / Start</h3></div>
             <p v-if="!keyContentPaint?.sources?.length" class="state">暂无来源维度</p>
             <table v-else>
-              <thead><tr><th>Measurement</th><th>Start</th><th>样本</th><th>P50</th></tr></thead>
+              <thead><tr><th>Scope</th><th>Measurement</th><th>Start</th><th>样本</th><th>P50</th></tr></thead>
               <tbody>
-                <tr v-for="source in keyContentPaint.sources" :key="`kcp-${source.measurementSource}-${source.startSource}`">
+                <tr v-for="source in keyContentPaint.sources" :key="`kcp-${source.scope}-${source.measurementSource}-${source.startSource}`">
+                  <td>{{ source.scope }}</td>
                   <td>{{ source.measurementSource }}</td>
                   <td>{{ source.startSource }}</td>
                   <td>{{ source.sampleCount }}</td>

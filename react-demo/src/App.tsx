@@ -90,11 +90,24 @@ const coverageGroups: Array<{
     title: string;
     icon: typeof Activity;
     items: string[];
+    /** false = supported public API surface, not started by this demo's default boot path */
+    enabled?: boolean;
 }> = [
     {
         title: "页面性能",
         icon: Gauge,
         items: ["FP", "FCP", "LCP", "Load", "Resource"],
+    },
+    {
+        title: "View Paint（需显式启用）",
+        icon: Gauge,
+        enabled: false,
+        items: [
+            "VFCP",
+            "VLCP",
+            "Key Content Paint",
+            "Soft Navigation View Paint",
+        ],
     },
     {
         title: "网络请求",
@@ -121,7 +134,8 @@ const coverageGroups: Array<{
     },
 ];
 const coverageItemCount = coverageGroups.reduce(
-    (total, group) => total + group.items.length,
+    (total, group) =>
+        group.enabled === false ? total : total + group.items.length,
     0,
 );
 
@@ -543,7 +557,9 @@ function CoverageView(): ReactNode {
                             <ul>
                                 {group.items.map((item) => (
                                     <li key={item}>
-                                        <CheckCircle2 aria-hidden="true" />
+                                        {group.enabled === false ? null : (
+                                            <CheckCircle2 aria-hidden="true" />
+                                        )}
                                         {item}
                                     </li>
                                 ))}

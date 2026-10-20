@@ -261,8 +261,8 @@ npm run dev:platform
 ## 文档
 
 - [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA PV 接入
-- [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
-- [Behavior 用户行为监控](docs/behavior.md)：各功能模块的实现、调用链、设计理由、生命周期和边界
+- [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、View Paint（VFCP/VLCP/Key Content Paint）、Metric Coverage、load、resource、Fetch、XHR
+- [Behavior 用户行为监控](docs/behavior.md)：Page View 生命周期、Navigation Attempt、点击与路由
 - [点击采集设计](docs/click-tracking.md)：属性门控、事件路径、旧版迁移、跨端边界和隐私治理
 - [Error 错误监控](docs/error.md)：资源、JavaScript、Promise、Vue、React 错误
 - [Replay 会话录屏](docs/replay.md)：rrweb 操作记录、隐私脱敏和错误定位

@@ -199,7 +199,7 @@ interface PageViewReportData {
 
 `token`、`access_token`、`refresh_token`、`id_token`、`password`、`passwd`、`secret`、`api_key`、`apikey`、`auth`、`authorization`、`session`、`sessionid`、`sid`、`code`
 
-无法解析的字符串原样返回。Page URL 适合诊断，不应当作默认聚合键；聚合应优先使用 `pageName`，否则 `routePattern`。
+无法解析的字符串原样返回。Page URL 适合诊断，不应当作默认聚合键；聚合应优先使用 `pageName`，否则 `routePattern`。服务端 View Paint 分析以这些 Page View 为 Metric Coverage 分母，并把文档级 FCP/LCP 投影到 `startSource: "initial"` 的 Page View（见 [Performance](performance.md) 6.D）。
 
 ### 6.3 去重规则
 

@@ -743,4 +743,409 @@ describe("view paint metric aggregation", () => {
       }),
     ]);
   });
+
+  it("projects document FCP/LCP onto the initial Page View with document scope", () => {
+    const pageViews = [
+      {
+        id: 10,
+        timestamp: 900,
+        pageUrl: "https://example.test/home",
+        subType: "pv",
+        data: {
+          viewId: "view-initial",
+          pageName: "home",
+          routePattern: "/home",
+          startSource: "initial",
+          pageUrl: "https://example.test/home",
+        },
+      },
+      {
+        id: 11,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "pv",
+        data: {
+          viewId: "view-client",
+          pageName: "product-detail",
+          routePattern: "/products/:id",
+          startSource: "navigation",
+          pageUrl: "https://example.test/products/1",
+        },
+      },
+    ];
+    const rows = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/home",
+        subType: "first-contentful-paint",
+        data: { value: 180 },
+      },
+      {
+        id: 2,
+        timestamp: 1_100,
+        pageUrl: "https://example.test/home",
+        subType: "largest-contentful-paint",
+        data: { value: 420 },
+      },
+      {
+        id: 3,
+        timestamp: 2_100,
+        pageUrl: "https://example.test/products/1",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 90,
+          viewId: "view-client",
+          pageName: "product-detail",
+          routePattern: "/products/:id",
+          measurementSource: "declared-content",
+          startSource: "navigation",
+        },
+      },
+    ];
+
+    const withoutScope = summarizeViewPaintMetrics(
+      rows,
+      { metrics: ["view-first-contentful-paint", "view-largest-contentful-paint"] },
+      pageViews,
+    );
+
+    expect(withoutScope).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        // Default top-level stats stay on view scope so document and view are not mixed.
+        sampleCount: 1,
+        measurablePageViewCount: 2,
+        metricCoverage: 0.5,
+        p50: null,
+        pages: [
+          expect.objectContaining({
+            pageKey: "product-detail",
+            sampleCount: 1,
+          }),
+        ],
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            scope: "document",
+            measurementSource: "document",
+            startSource: "initial",
+            sampleCount: 1,
+          }),
+          expect.objectContaining({
+            scope: "view",
+            measurementSource: "declared-content",
+            startSource: "navigation",
+            sampleCount: 1,
+          }),
+        ]),
+        scopes: expect.arrayContaining([
+          expect.objectContaining({
+            scope: "document",
+            sampleCount: 1,
+            p50: null,
+          }),
+          expect.objectContaining({
+            scope: "view",
+            sampleCount: 1,
+            p50: null,
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        metric: "view-largest-contentful-paint",
+        sampleCount: 0,
+        measurablePageViewCount: 2,
+        metricCoverage: 0,
+        sources: [
+          expect.objectContaining({
+            scope: "document",
+            measurementSource: "document",
+            startSource: "initial",
+            sampleCount: 1,
+          }),
+        ],
+        scopes: [
+          expect.objectContaining({
+            scope: "document",
+            sampleCount: 1,
+            p50: null,
+          }),
+        ],
+      }),
+    ]);
+
+    expect(
+      summarizeViewPaintMetrics(
+        rows,
+        {
+          metrics: ["view-first-contentful-paint"],
+          scope: "document",
+        },
+        pageViews,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        sampleCount: 1,
+        measurablePageViewCount: 1,
+        metricCoverage: 1,
+        p50: null,
+        pages: [
+          expect.objectContaining({
+            pageKey: "home",
+            sampleCount: 1,
+          }),
+        ],
+        sources: [
+          expect.objectContaining({
+            scope: "document",
+            measurementSource: "document",
+            startSource: "initial",
+            sampleCount: 1,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("exposes document projection, coverage, and scope filters over HTTP", async () => {
+    const databasePath = `/tmp/view-paint-coverage-${Date.now()}-${Math.random()}.sqlite`;
+    databases.push(databasePath);
+    const baseUrl = await start(databasePath);
+
+    const ingest = await fetch(`${baseUrl}/api/v1/reportData`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        envelope(1_700_000_000_000, [
+          {
+            type: "behavior",
+            subType: "pv",
+            viewId: "view-home",
+            pageName: "home",
+            routePattern: "/home",
+            startSource: "initial",
+            pageUrl: "https://example.test/home",
+            startTime: 0,
+            referrer: "",
+            uuid: "pv-home",
+          },
+          {
+            type: "behavior",
+            subType: "pv",
+            viewId: "view-product",
+            pageName: "product-detail",
+            routePattern: "/products/:id",
+            startSource: "navigation",
+            pageUrl: "https://example.test/products/1",
+            startTime: 10,
+            referrer: "https://example.test/home",
+            uuid: "pv-product",
+          },
+          {
+            type: "performance",
+            subType: "first-contentful-paint",
+            value: 160,
+            pageUrl: "https://example.test/home",
+          },
+          {
+            type: "performance",
+            subType: "view-first-contentful-paint",
+            value: 110,
+            pageUrl: "https://example.test/products/1",
+            viewId: "view-product",
+            pageName: "product-detail",
+            measurementSource: "declared-content",
+            startSource: "navigation",
+          },
+        ]),
+      ),
+    });
+    expect(ingest.status).toBe(202);
+
+    const documentScoped = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=view-first-contentful-paint&scope=document`,
+      )
+    ).json()) as {
+      metrics: Array<{
+        metric: string;
+        sampleCount: number;
+        measurablePageViewCount: number;
+        metricCoverage: number | null;
+        pages: Array<{ pageKey: string }>;
+        sources: Array<{ scope: string; measurementSource: string }>;
+      }>;
+    };
+    expect(documentScoped.metrics).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        sampleCount: 1,
+        measurablePageViewCount: 1,
+        metricCoverage: 1,
+        pages: [expect.objectContaining({ pageKey: "home" })],
+        sources: [
+          expect.objectContaining({
+            scope: "document",
+            measurementSource: "document",
+          }),
+        ],
+      }),
+    ]);
+
+    const viewScoped = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=view-first-contentful-paint&scope=view`,
+      )
+    ).json()) as {
+      metrics: Array<{
+        sampleCount: number;
+        measurablePageViewCount: number;
+        metricCoverage: number | null;
+        pages: Array<{ pageKey: string }>;
+      }>;
+    };
+    expect(viewScoped.metrics).toEqual([
+      expect.objectContaining({
+        sampleCount: 1,
+        measurablePageViewCount: 2,
+        metricCoverage: 0.5,
+        pages: [expect.objectContaining({ pageKey: "product-detail" })],
+      }),
+    ]);
+  });
+
+  it("filters view paint samples by startSource without fabricating missing pages", () => {
+    const rows = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/a",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 100,
+          pageName: "page-a",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 2,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/b",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 200,
+          routePattern: "/b",
+          measurementSource: "declared-content",
+          startSource: "history",
+        },
+      },
+    ];
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-first-contentful-paint"],
+        startSource: "history",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        sampleCount: 1,
+        pages: [expect.objectContaining({ pageKey: "/b" })],
+        sources: [
+          expect.objectContaining({
+            scope: "view",
+            measurementSource: "declared-content",
+            startSource: "history",
+            sampleCount: 1,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("keeps missing paint measurements absent and covers only measurable Page Views", () => {
+    const pageViews = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/a",
+        subType: "pv",
+        data: {
+          viewId: "view-a",
+          pageName: "page-a",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 2,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/b",
+        subType: "pv",
+        data: {
+          viewId: "view-b",
+          pageName: "page-b",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 3,
+        timestamp: 3_000,
+        pageUrl: "https://example.test/c",
+        subType: "pv",
+        data: {
+          viewId: "view-c",
+          routePattern: "/c",
+          startSource: "history",
+        },
+      },
+    ];
+    const rows = [
+      {
+        id: 10,
+        timestamp: 1_100,
+        pageUrl: "https://example.test/a",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 100,
+          viewId: "view-a",
+          pageName: "page-a",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 11,
+        timestamp: 2_100,
+        pageUrl: "https://example.test/b",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 200,
+          viewId: "view-b",
+          pageName: "page-b",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+    ];
+
+    expect(
+      summarizeViewPaintMetrics(
+        rows,
+        { metrics: ["view-first-contentful-paint"] },
+        pageViews,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "view-first-contentful-paint",
+        sampleCount: 2,
+        measurablePageViewCount: 3,
+        metricCoverage: 2 / 3,
+        p50: 150,
+        pages: expect.not.arrayContaining([
+          expect.objectContaining({ pageKey: "/c" }),
+        ]),
+      }),
+    ]);
+  });
 });

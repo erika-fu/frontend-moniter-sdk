@@ -326,7 +326,7 @@ View First Contentful Paint（VFCP）测量**当前 Page View** 从 View Start �
 }
 ```
 
-服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并。可用 `measurementSource` 筛选，默认按来源分列，不把 soft-navigation 与 fallback 混成一行。
+服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并，也不套用 Core Web Vitals 好坏评级。可用 `scope`（`document` / `view`）与 `measurementSource` 筛选；默认顶层百分位与 Metric Coverage 只统计 `view`，`document` 投影出现在组成维度中。聚合键优先 Page Name，否则 Route Pattern。Metric Coverage = 有效样本 / 可测 Page View，缺失测量保持缺席。
 
 ## 6.B View Largest Contentful Paint：`observeViewLargestContentfulPaint`
 
@@ -382,7 +382,7 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
 }
 ```
 
-服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 Measurement Source、Start Source 与 finalization reason。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并；可用 `measurementSource` 筛选 soft-navigation 与 declared-region。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
+服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 scope、Measurement Source、Start Source、finalization reason 与 Metric Coverage。文档级 LCP 可投影到初始 Page View（`scope=document`），与客户端 VLCP（`scope=view`）默认分列。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并，不套用 Core Web Vitals 评级。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
 
 ## 6.A′ Soft Navigation 增强：`observeSoftNavigationViewPaint`
 
@@ -452,7 +452,19 @@ Key Content Paint（KCP）测量**当前 Page View** 从 View Start 到「应用
 }
 ```
 
-服务端 `/api/v1/performance/view-paint` 支持 `metrics=key-content-paint` 与 `keyContentName` 过滤，并按关键内容名称分组；platform 在独立的「Key Content Paint」区展示，用语不暗示 Web Vital。Vue demo 的「大主图 → 小价格关键内容」对照最大视觉块与任务关键目标。
+服务端 `/api/v1/performance/view-paint` 支持 `metrics=key-content-paint` 与 `keyContentName` 过滤，并按关键内容名称分组，同样暴露 Metric Coverage 与来源组成；platform 在独立的「Key Content Paint」区展示，用语不暗示 Web Vital。Vue demo 的「大主图 → 小价格关键内容」对照最大视觉块与任务关键目标。
+
+## 6.D Page View 漆面分析：文档投影与 Metric Coverage
+
+查询层把已有的文档级 `first-contentful-paint` / `largest-contentful-paint` **投影**到 `startSource: "initial"` 的 Page View 上，作为 `view-first-contentful-paint` / `view-largest-contentful-paint` 的 `scope: "document"` 样本；客户端无需也不应再为同一初始呈现复制一份 View Paint。客户端 View Paint 保留 `scope: "view"`。
+
+默认（未传 `scope`）时：
+
+- 顶层 `sampleCount` / P50 / P75 / P95 / Metric Coverage 只统计 `view`；
+- `sources` / `scopes` 仍列出 document 与 view 的组成；
+- 传入 `scope=document` 或 `scope=view` 后，顶层统计与分母都收窄到该作用域（document 的可测分母为初始 Page View）。
+
+Metric Coverage = 有效样本数 / 可测 Page View 数。没有产出指标的 Page View 不会被写成 `0` 或超时样本。Page URL 只用于单次诊断，默认聚合键始终是 Page Name，否则 Route Pattern。
 
 ## 7. LCP：`observeLCP()`
 
