@@ -112,6 +112,7 @@ function removeFinalizationListeners(): void {
 function disconnectObservation(): void {
     declaredObserver?.disconnect();
     declaredObserver = undefined;
+    declaredRoot?.removeEventListener("load", onMediaLoad, true);
     declaredRoot = undefined;
     declaredOnReport = undefined;
     boundView = undefined;
@@ -192,7 +193,7 @@ function scanCandidates(): void {
     }
     const now = performance.now();
     const pageView = getActivePageView();
-    let best: CandidatePaint | undefined;
+    let best = currentCandidate;
     const elements: Element[] = [
         declaredRoot,
         ...declaredRoot.querySelectorAll("*"),
@@ -276,6 +277,13 @@ function onPageHide(): void {
     finalize("page-hidden");
 }
 
+function onMediaLoad(event: Event): void {
+    if (!(event.target instanceof Element) || !declaredRoot?.contains(event.target)) {
+        return;
+    }
+    scanCandidates();
+}
+
 function onNextPageView(pageView: { viewId: string }): void {
     if (boundView && pageView.viewId !== boundView.viewId) {
         finalize("next-page-view");
@@ -344,6 +352,7 @@ export function observeViewLargestContentfulPaint(
         }, timeout);
     }
 
+    declaredRoot.addEventListener("load", onMediaLoad, true);
     scanCandidates();
     declaredObserver = new MutationObserver(() => {
         scanCandidates();

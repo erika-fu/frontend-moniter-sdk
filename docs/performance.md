@@ -333,7 +333,7 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
 - `data-view-advertising`
 - `data-view-recommendation`
 
-声明区域之外的内容即使更大也不会成为候选。更大的合格内容会替换当前候选，并记下它达到该面积的时刻；更小的后续内容不会替换。`value` 是这个时刻相对 View Start 的毫秒数。
+声明区域之外的内容即使更大也不会成为候选。更大的合格内容会替换当前候选，并记下它达到该面积的时刻；更小的后续内容不会替换，已经记录的更大候选被移出区域后也不会把指标退回。图片或视频在 `load` 时会重新测量。`value` 是最大候选达到该面积时相对 View Start 的毫秒数。
 
 ### 6.B.2 最终确定
 

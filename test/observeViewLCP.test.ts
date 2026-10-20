@@ -429,4 +429,43 @@ describe("view-largest-contentful-paint", () => {
       }),
     );
   });
+
+  it("keeps the largest candidate after it is removed and after an image loads", async () => {
+    const onReport = vi.fn<(data: ViewLargestContentfulPaintReportData) => void>();
+    const root = document.createElement("main");
+    document.body.append(root);
+    const now = preparePageView({ startTime: 100, viewId: "view-stable" });
+    armTrustedEvents();
+    observeViewLargestContentfulPaint({ root, onReport, timeout: 60_000 });
+
+    const large = textBlock("Hero", 400, 200);
+    now.mockReturnValue(220);
+    root.append(large);
+    await Promise.resolve();
+
+    now.mockReturnValue(360);
+    root.append(textBlock("caption", 40, 20));
+    await Promise.resolve();
+    large.remove();
+    await Promise.resolve();
+
+    const image = document.createElement("img");
+    image.alt = "poster";
+    root.append(image);
+    await Promise.resolve();
+    now.mockReturnValue(480);
+    box(image, 500, 300);
+    image.dispatchEvent(new Event("load"));
+
+    documentEvents.emit("pointerdown", { isTrusted: true });
+
+    expect(onReport).toHaveBeenCalledTimes(1);
+    expect(onReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        viewId: "view-stable",
+        value: 380,
+        finalizationReason: "interaction",
+      }),
+    );
+  });
 });
