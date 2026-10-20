@@ -7,11 +7,13 @@ import {
     pushHistoryRoute,
     requestWithFetch,
     requestWithXHR,
+    runKeyContentPaintScenario,
     runSkeletonToContentScenario,
     runViewLargestContentfulPaintScenario,
     switchRoute,
 } from "../demo/src/scenarios.js";
 import { stopObserveBehavior } from "../src/behavior/index.js";
+import { resetKeyContentPaint } from "../src/performance/observeKeyContentPaint.js";
 import { resetViewFirstContentfulPaint } from "../src/performance/observeViewFCP.js";
 import { resetViewLargestContentfulPaint } from "../src/performance/observeViewLCP.js";
 
@@ -19,6 +21,7 @@ describe("demo monitoring scenarios", () => {
     afterEach(() => {
         resetViewFirstContentfulPaint();
         resetViewLargestContentfulPaint();
+        resetKeyContentPaint();
         stopObserveBehavior();
         vi.unstubAllGlobals();
         vi.useRealTimers();
@@ -214,6 +217,74 @@ describe("demo monitoring scenarios", () => {
                 value: 400,
                 finalizationReason: "timeout",
                 measurementSource: "declared-region",
+            }),
+        ]);
+
+        scenario.dispose();
+        unsubscribe();
+    });
+
+    it("contrasts a larger visual with smaller key content for Key Content Paint", async () => {
+        vi.useFakeTimers();
+        const reports: Array<{
+            subType?: string;
+            keyContentName?: string;
+            measurementSource?: string;
+        }> = [];
+        const { subscribe } = await import("../src/index.js");
+        const unsubscribe = subscribe((data) => {
+            reports.push(
+                data as {
+                    subType?: string;
+                    keyContentName?: string;
+                    measurementSource?: string;
+                },
+            );
+        });
+
+        window.history.replaceState({}, "", "/demo");
+        const scenario = runKeyContentPaintScenario({
+            keyDelay: 400,
+            keyContentName: "product-price",
+        });
+        expect(scenario.phase).toBe("visual-only");
+        expect(
+            scenario.root.querySelector("[data-key-content-visual='large']"),
+        ).not.toBeNull();
+        expect(
+            reports.some((report) => report.subType === "key-content-paint"),
+        ).toBe(false);
+        expect(
+            reports.some(
+                (report) => report.subType === "view-largest-contentful-paint",
+            ),
+        ).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(400);
+        await Promise.resolve();
+
+        expect(scenario.phase).toBe("key-ready");
+        const critical = scenario.root.querySelector(
+            "[data-key-content-critical]",
+        ) as HTMLElement | null;
+        const visual = scenario.root.querySelector(
+            "[data-key-content-visual='large']",
+        ) as HTMLElement | null;
+        expect(critical).not.toBeNull();
+        expect(
+            Number.parseFloat(visual?.style.width ?? "0") *
+                Number.parseFloat(visual?.style.height ?? "0"),
+        ).toBeGreaterThan(
+            Number.parseFloat(critical?.style.width ?? "0") *
+                Number.parseFloat(critical?.style.height ?? "0"),
+        );
+        expect(
+            reports.filter((report) => report.subType === "key-content-paint"),
+        ).toEqual([
+            expect.objectContaining({
+                subType: "key-content-paint",
+                keyContentName: "product-price",
+                measurementSource: "declared-content",
             }),
         ]);
 

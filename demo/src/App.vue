@@ -14,10 +14,12 @@ import {
     rejectPromise,
     requestWithFetch,
     requestWithXHR,
+    runKeyContentPaintScenario,
     runSkeletonToContentScenario,
     runViewLargestContentfulPaintScenario,
     switchRoute,
     throwJavaScriptError,
+    type KeyContentPaintScenario,
     type SkeletonToContentResult,
     type ViewLargestContentfulPaintScenario,
 } from "./scenarios";
@@ -26,8 +28,10 @@ const showVueError = ref(false);
 const unmarkedComparisonMessage = ref("");
 const viewFcpStatus = ref("");
 const viewLcpStatus = ref("");
+const keyContentStatus = ref("");
 let activeViewFcpScenario: SkeletonToContentResult | undefined;
 let activeViewLcpScenario: ViewLargestContentfulPaintScenario | undefined;
+let activeKeyContentScenario: KeyContentPaintScenario | undefined;
 const monitorUrl =
     import.meta.env.VITE_MONITOR_URL ??
     "http://localhost:9800/api/v1/reportData";
@@ -49,6 +53,8 @@ onBeforeUnmount(() => {
     activeViewFcpScenario = undefined;
     activeViewLcpScenario?.dispose();
     activeViewLcpScenario = undefined;
+    activeKeyContentScenario?.dispose();
+    activeKeyContentScenario = undefined;
 });
 onMounted(startReplayRecording);
 
@@ -93,6 +99,22 @@ function runViewLcpScenario(): void {
                 "主内容已替换为更大的候选。广告仍然更大，但不会成为 VLCP。点击页面会以 interaction 结束观察，否则 8 秒后以 timeout 上报一次。";
         }
     }, 800);
+}
+
+function runKeyContentScenario(): void {
+    activeKeyContentScenario?.dispose();
+    keyContentStatus.value =
+        "已展示更大的视觉区域。等待更小的任务关键价格出现…";
+    activeKeyContentScenario = runKeyContentPaintScenario({
+        keyDelay: 600,
+        keyContentName: "product-price",
+    });
+    window.setTimeout(() => {
+        if (activeKeyContentScenario?.phase === "key-ready") {
+            keyContentStatus.value =
+                "已上报 Key Content Paint（product-price）。它不是 View LCP，也不会把最大主图当成关键内容。";
+        }
+    }, 700);
 }
 </script>
 
@@ -277,6 +299,32 @@ function runViewLcpScenario(): void {
                 </div>
                 <p v-if="viewLcpStatus" class="section-note" role="status">
                     {{ viewLcpStatus }}
+                </p>
+            </section>
+
+            <section class="scenario-section" aria-labelledby="key-content-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">VIEW PAINT</p>
+                        <h2 id="key-content-title">Key Content Paint</h2>
+                    </div>
+                </div>
+                <p class="section-note">
+                    先展示更大的商品主图，再延迟插入更小的价格（
+                    <code>data-key-content=&quot;product-price&quot;</code>
+                    ）。Key Content Paint 只测量应用声明的任务关键目标，与 View Largest Contentful Paint 相互独立，也不是标准 Web Vital。
+                </p>
+                <div class="scenario-grid">
+                    <button
+                        type="button"
+                        clstag="key-content-vs-largest-visual"
+                        @click="runKeyContentScenario"
+                    >
+                        大主图 → 小价格关键内容
+                    </button>
+                </div>
+                <p v-if="keyContentStatus" class="section-note" role="status">
+                    {{ keyContentStatus }}
                 </p>
             </section>
 

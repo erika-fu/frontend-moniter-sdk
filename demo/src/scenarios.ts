@@ -3,11 +3,14 @@ import {
     commitNavigationAttempt,
     markNavigationRedirect,
     markViewFirstContentfulPaint,
+    observeKeyContentPaint,
     observeViewFirstContentfulPaint,
     observeViewLargestContentfulPaint,
+    resetKeyContentPaint,
     resetViewFirstContentfulPaint,
     resetViewLargestContentfulPaint,
     startNavigationAttempt,
+    stopObserveKeyContentPaint,
     stopObserveViewFirstContentfulPaint,
     stopObserveViewLargestContentfulPaint,
 } from "../../src/index.js";
@@ -274,6 +277,90 @@ export function runViewLargestContentfulPaintScenario(options?: {
         dispose() {
             window.clearTimeout(timer);
             stopObserveViewLargestContentfulPaint();
+            root.remove();
+            phase = "idle";
+        },
+    };
+}
+
+export type KeyContentPaintPhase = "visual-only" | "key-ready" | "idle";
+
+export interface KeyContentPaintScenario {
+    root: HTMLElement;
+    readonly phase: KeyContentPaintPhase;
+    dispose: () => void;
+}
+
+/**
+ * 先放一个更大的视觉区域，再延迟插入更小的任务关键内容。
+ * Key Content Paint 只认 `data-key-content` 命名目标，不会把最大视觉块当成指标。
+ */
+export function runKeyContentPaintScenario(options?: {
+    keyDelay?: number;
+    keyContentName?: string;
+}): KeyContentPaintScenario {
+    resetKeyContentPaint();
+    const keyDelay = options?.keyDelay ?? 500;
+    const keyContentName = options?.keyContentName ?? "product-price";
+
+    const pageUrl = new URL(
+        `#/scenario/key-content?t=${Date.now()}`,
+        window.location.href,
+    ).href;
+    startNavigationAttempt();
+    commitNavigationAttempt({
+        pageName: "key-content",
+        routePattern: "/scenario/key-content",
+        pageUrl,
+    });
+    window.location.hash = "#/scenario/key-content";
+
+    const root = document.createElement("section");
+    root.setAttribute("data-key-content-demo", "");
+    root.setAttribute("aria-label", "key content paint scenario");
+    document.body.append(root);
+
+    const status = document.createElement("p");
+    status.setAttribute("data-key-content-status", "");
+    status.textContent =
+        "已展示更大的视觉区域。任务关键的价格尚未出现，因此还没有 Key Content Paint。";
+    root.append(status);
+
+    const region = document.createElement("div");
+    region.setAttribute("data-key-content-root", "");
+    root.append(region);
+
+    const visual = document.createElement("div");
+    visual.setAttribute("data-key-content-visual", "large");
+    visual.style.width = "640px";
+    visual.style.height = "320px";
+    visual.textContent = "更大的商品主图（视觉最大，但不是任务关键）";
+    region.append(visual);
+
+    observeKeyContentPaint({ name: keyContentName, root: region });
+
+    let phase: KeyContentPaintPhase = "visual-only";
+    const timer = window.setTimeout(() => {
+        const price = document.createElement("p");
+        price.setAttribute("data-key-content", keyContentName);
+        price.setAttribute("data-key-content-critical", "");
+        price.style.width = "120px";
+        price.style.height = "32px";
+        price.textContent = "¥199";
+        region.append(price);
+        phase = "key-ready";
+        status.textContent =
+            "更小的价格已可见。Key Content Paint 针对 product-price，与最大视觉块无关。";
+    }, keyDelay);
+
+    return {
+        root,
+        get phase() {
+            return phase;
+        },
+        dispose() {
+            window.clearTimeout(timer);
+            stopObserveKeyContentPaint(keyContentName);
             root.remove();
             phase = "idle";
         },

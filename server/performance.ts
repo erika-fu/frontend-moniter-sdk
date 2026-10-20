@@ -6,11 +6,13 @@ export type PerformanceMetricName =
 
 export type ViewPaintMetricName =
     | "view-first-contentful-paint"
-    | "view-largest-contentful-paint";
+    | "view-largest-contentful-paint"
+    | "key-content-paint";
 
 const VIEW_PAINT_METRICS: ViewPaintMetricName[] = [
     "view-first-contentful-paint",
     "view-largest-contentful-paint",
+    "key-content-paint",
 ];
 
 export interface PerformanceEventRow {
@@ -56,6 +58,8 @@ export interface PerformanceMetricPoint {
 
 export interface ViewPaintMetricQuery extends PerformanceFilter {
     metrics?: ViewPaintMetricName[] | undefined;
+    /** 仅 Key Content Paint：按关键内容名称过滤。 */
+    keyContentName?: string | undefined;
 }
 
 export interface ViewPaintMetricPoint {
@@ -75,6 +79,13 @@ export interface ViewPaintMetricPoint {
         measurementSource: string;
         startSource: string;
         finalizationReason: string;
+        sampleCount: number;
+        p50: number | null;
+        p75: number | null;
+        p95: number | null;
+    }>;
+    keyContents: Array<{
+        keyContentName: string;
         sampleCount: number;
         p50: number | null;
         p75: number | null;
@@ -252,7 +263,8 @@ function viewPaintValue(
 /**
  * 按 Page Name（无则 Route Pattern）聚合 View Paint Metrics，
  * 并保留 Measurement Source、Start Source 与 finalization reason；
- * 不与文档级 FCP / LCP 混用。
+ * Key Content Paint 另可按关键内容名称过滤与分组；
+ * 不与文档级 FCP / LCP 混用，各 View Paint Metric 彼此独立。
  */
 export function summarizeViewPaintMetrics(
     rows: PerformanceEventRow[],
@@ -261,15 +273,32 @@ export function summarizeViewPaintMetrics(
     const requested = query.metrics?.length
         ? query.metrics.filter((metric) => VIEW_PAINT_METRICS.includes(metric))
         : VIEW_PAINT_METRICS;
+    const keyContentFilter =
+        typeof query.keyContentName === "string" && query.keyContentName.trim()
+            ? query.keyContentName.trim()
+            : undefined;
 
     return requested.map((metric) => {
         const samples = rows.flatMap((row) => {
             const value = viewPaintValue(row, metric);
-            return value === null || value < 0 ? [] : [{ row, value }];
+            if (value === null || value < 0) {
+                return [];
+            }
+            if (metric === "key-content-paint" && keyContentFilter) {
+                const name =
+                    typeof row.data.keyContentName === "string"
+                        ? row.data.keyContentName
+                        : "";
+                if (name !== keyContentFilter) {
+                    return [];
+                }
+            }
+            return [{ row, value }];
         });
         const values = samples.map((sample) => sample.value);
         const pages = new Map<string, number[]>();
         const sources = new Map<string, number[]>();
+        const keyContents = new Map<string, number[]>();
         for (const sample of samples) {
             const pageKey = viewPaintPageKey(sample.row.data);
             pages.set(pageKey, [...(pages.get(pageKey) ?? []), sample.value]);
@@ -290,6 +319,17 @@ export function summarizeViewPaintMetrics(
                 ...(sources.get(sourceKey) ?? []),
                 sample.value,
             ]);
+            if (metric === "key-content-paint") {
+                const keyContentName =
+                    typeof sample.row.data.keyContentName === "string" &&
+                    sample.row.data.keyContentName.trim()
+                        ? sample.row.data.keyContentName
+                        : "(unknown)";
+                keyContents.set(keyContentName, [
+                    ...(keyContents.get(keyContentName) ?? []),
+                    sample.value,
+                ]);
+            }
         }
         return {
             metric,
@@ -331,6 +371,18 @@ export function summarizeViewPaintMetrics(
                             right.finalizationReason,
                         ),
                 ),
+            keyContents: [...keyContents.entries()]
+                .map(([keyContentName, nameValues]) => ({
+                    keyContentName,
+                    ...statistics(nameValues),
+                }))
+                .sort(
+                    (left, right) =>
+                        (right.p50 ?? -1) - (left.p50 ?? -1) ||
+                        right.sampleCount - left.sampleCount ||
+                        left.keyContentName.localeCompare(right.keyContentName),
+                )
+                .slice(0, 20),
         };
     });
 }

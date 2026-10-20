@@ -33,7 +33,7 @@ interface PerformanceMetric {
   pages: Array<{ pageUrl: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
 }
 interface ViewPaintMetric {
-  metric: "view-first-contentful-paint" | "view-largest-contentful-paint";
+  metric: "view-first-contentful-paint" | "view-largest-contentful-paint" | "key-content-paint";
   sampleCount: number;
   p50: number | null;
   p75: number | null;
@@ -43,6 +43,13 @@ interface ViewPaintMetric {
     measurementSource: string;
     startSource: string;
     finalizationReason: string;
+    sampleCount: number;
+    p50: number | null;
+    p75: number | null;
+    p95: number | null;
+  }>;
+  keyContents: Array<{
+    keyContentName: string;
     sampleCount: number;
     p50: number | null;
     p75: number | null;
@@ -341,7 +348,7 @@ async function loadPerformance(): Promise<void> {
   try {
     const [metricsResponse, viewPaintResponse, requestsResponse, resourcesResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
-      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint,view-largest-contentful-paint`),
+      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint,view-largest-contentful-paint,key-content-paint`),
       fetch(`${apiUrl}/api/v1/performance/requests?${listQuery}`),
       fetch(`${apiUrl}/api/v1/performance/resources?${listQuery}`),
     ]);
@@ -367,8 +374,21 @@ function metricLabel(metric: MetricName): string {
 }
 
 function viewPaintLabel(metric: ViewPaintMetric["metric"]): string {
-  return metric === "view-largest-contentful-paint" ? "VLCP" : "VFCP";
+  if (metric === "view-largest-contentful-paint") return "VLCP";
+  if (metric === "key-content-paint") return "Key Content Paint";
+  return "VFCP";
 }
+
+const viewPaintCore = computed(() =>
+  (performance.value?.viewPaint ?? []).filter(
+    (metric) => metric.metric !== "key-content-paint",
+  ),
+);
+const keyContentPaint = computed(() =>
+  (performance.value?.viewPaint ?? []).find(
+    (metric) => metric.metric === "key-content-paint",
+  ),
+);
 
 function duration(value: number | null): string {
   return value === null ? "-" : `${Math.round(value)} ms`;
@@ -722,14 +742,14 @@ onUnmounted(() => {
         </div>
         <p class="result-count">相对 Page View 的 View Start。VFCP 与文档级 FCP 分开，VLCP 与文档级 LCP 分开；聚合键优先 Page Name，否则 Route Pattern。</p>
         <div class="summary-grid">
-          <article v-for="metric in performance.viewPaint" :key="metric.metric" class="metric">
+          <article v-for="metric in viewPaintCore" :key="metric.metric" class="metric">
             <span>{{ viewPaintLabel(metric.metric) }} · {{ metric.sampleCount }} 个样本</span>
             <strong>{{ duration(metric.p50) }}</strong>
             <small>P75 {{ duration(metric.p75) }} · P95 {{ duration(metric.p95) }}</small>
           </article>
         </div>
         <div class="performance-grid">
-          <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-pages`" class="performance-panel">
+          <article v-for="metric in viewPaintCore" :key="`${metric.metric}-pages`" class="performance-panel">
             <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 按页面聚合</h3><span>{{ metric.sampleCount }} 个样本</span></div>
             <p v-if="!metric.pages.length" class="state">当前筛选条件下没有 View Paint 数据</p>
             <ol v-else class="rank-list">
@@ -739,7 +759,7 @@ onUnmounted(() => {
               </li>
             </ol>
           </article>
-          <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-sources`" class="performance-panel">
+          <article v-for="metric in viewPaintCore" :key="`${metric.metric}-sources`" class="performance-panel">
             <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 来源与最终确定</h3></div>
             <p v-if="!metric.sources.length" class="state">暂无来源维度</p>
             <table v-else>
@@ -749,6 +769,59 @@ onUnmounted(() => {
                   <td>{{ source.measurementSource }}</td>
                   <td>{{ source.startSource }}</td>
                   <td>{{ source.finalizationReason || "—" }}</td>
+                  <td>{{ source.sampleCount }}</td>
+                  <td>{{ duration(source.p50) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </article>
+        </div>
+      </section>
+      <section class="performance-section" aria-labelledby="key-content-paint-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Application metric</p>
+            <h2 id="key-content-paint-title">Key Content Paint</h2>
+          </div>
+        </div>
+        <p class="result-count">应用声明的任务关键内容可见耗时。它不是标准 Web Vital，也不是 View Largest Contentful Paint；按关键内容名称与 Page Name（或 Route Pattern）聚合。</p>
+        <div class="summary-grid">
+          <article class="metric">
+            <span>Key Content Paint · {{ keyContentPaint?.sampleCount ?? 0 }} 个样本</span>
+            <strong>{{ duration(keyContentPaint?.p50 ?? null) }}</strong>
+            <small>P75 {{ duration(keyContentPaint?.p75 ?? null) }} · P95 {{ duration(keyContentPaint?.p95 ?? null) }}</small>
+          </article>
+        </div>
+        <div class="performance-grid">
+          <article class="performance-panel">
+            <div class="section-heading"><h3>按关键内容名称</h3><span>{{ keyContentPaint?.sampleCount ?? 0 }} 个样本</span></div>
+            <p v-if="!keyContentPaint?.keyContents?.length" class="state">当前筛选条件下没有 Key Content Paint 数据</p>
+            <ol v-else class="rank-list">
+              <li v-for="item in keyContentPaint.keyContents.slice(0, 8)" :key="item.keyContentName">
+                <span :title="item.keyContentName">{{ item.keyContentName }}</span>
+                <strong>{{ duration(item.p50) }}</strong>
+              </li>
+            </ol>
+          </article>
+          <article class="performance-panel">
+            <div class="section-heading"><h3>按页面聚合</h3></div>
+            <p v-if="!keyContentPaint?.pages?.length" class="state">暂无页面聚合</p>
+            <ol v-else class="rank-list">
+              <li v-for="page in keyContentPaint.pages.slice(0, 8)" :key="page.pageKey">
+                <span :title="page.pageKey">{{ page.pageKey }}</span>
+                <strong>{{ duration(page.p50) }}</strong>
+              </li>
+            </ol>
+          </article>
+          <article class="performance-panel">
+            <div class="section-heading"><h3>Measurement / Start Source</h3></div>
+            <p v-if="!keyContentPaint?.sources?.length" class="state">暂无来源维度</p>
+            <table v-else>
+              <thead><tr><th>Measurement</th><th>Start</th><th>样本</th><th>P50</th></tr></thead>
+              <tbody>
+                <tr v-for="source in keyContentPaint.sources" :key="`kcp-${source.measurementSource}-${source.startSource}`">
+                  <td>{{ source.measurementSource }}</td>
+                  <td>{{ source.startSource }}</td>
                   <td>{{ source.sampleCount }}</td>
                   <td>{{ duration(source.p50) }}</td>
                 </tr>

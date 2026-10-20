@@ -1007,6 +1007,7 @@ export class SQLiteReportStore {
             this.performanceEvents(query, [
                 "view-first-contentful-paint",
                 "view-largest-contentful-paint",
+                "key-content-paint",
             ]),
             query,
         );

@@ -2,13 +2,14 @@
 
 本文是 `src/performance/` 的权威实现指南，说明 SDK 如何采集性能数据、各采集器为何使用特定浏览器 API、报告如何经过共享上报管道，以及数据不得被过度解读的边界。
 
-该模块当前会产生九种报告子类型：
+该模块当前会产生十种报告子类型：
 
 - `first-paint`
 - `first-contentful-paint`
 - `largest-contentful-paint`
 - `view-first-contentful-paint`
 - `view-largest-contentful-paint`
+- `key-content-paint`
 - `load`
 - `resource`
 - `fetch`
@@ -19,6 +20,8 @@
 `view-first-contentful-paint`（View First Contentful Paint）是 Page View 作用域的 View Paint Metric，与文档级 `first-contentful-paint` 相互独立；不会由 `monitor.performance()` 自动启动，需业务调用 `markViewFirstContentfulPaint()` 或 `observeViewFirstContentfulPaint()`。
 
 `view-largest-contentful-paint`（View Largest Contentful Paint）同样属于 Page View，与文档级 `largest-contentful-paint` 相互独立。它观察声明的首屏内容区，候选只保留在本地，每个 `viewId` 最多上报一次最终值。不会由 `monitor.performance()` 自动启动，需业务调用 `observeViewLargestContentfulPaint()`。
+
+`key-content-paint`（Key Content Paint）测量应用声明的任务关键内容可见耗时，与最大元素无关，也不是 View LCP 的别名或回退。每个 `(viewId, keyContentName)` 最多上报一次；不会由 `monitor.performance()` 自动启动，需业务调用 `markKeyContentPaint()` 或 `observeKeyContentPaint()`。
 
 性能采集器只创建报告并将其交给 SDK 全局分发器。安装与应用集成见 [业务使用](business-usage.md)，共享缓存 / envelope / 传输行为见 [SDK 入口与内部机制](sdk-internals.md)，端点、存储、保留和查询契约见 [服务端文档](server.md)。
 
@@ -67,10 +70,13 @@ import {
   stopObserveViewFirstContentfulPaint,
   observeViewLargestContentfulPaint,
   stopObserveViewLargestContentfulPaint,
+  markKeyContentPaint,
+  observeKeyContentPaint,
+  stopObserveKeyContentPaint,
 } from "frontend-moniter-sdk";
 ```
 
-默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR、View FCP 与 View LCP 观察器具有显式停止 API。
+默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR、View FCP、View LCP 与 Key Content Paint 观察器具有显式停止 API。
 
 ## 2. 模块职责与生命周期
 
@@ -82,6 +88,7 @@ import {
 | `observeLCP.ts` | 适配 `web-vitals` LCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `largest-contentful-paint` |
 | `observeViewFCP.ts` | Page View 作用域的 View First Contentful Paint | 已上报 `viewId`、声明区 MutationObserver | `view-first-contentful-paint` |
 | `observeViewLCP.ts` | Page View 作用域的 View Largest Contentful Paint | 已上报 `viewId`、声明区 MutationObserver、最终确定监听与超时 | `view-largest-contentful-paint` |
+| `observeKeyContentPaint.ts` | Page View 作用域的 Key Content Paint | 已上报 `(viewId, name)`、按名称的 MutationObserver | `key-content-paint` |
 | `observeLoad.ts` | 测量文档加载完成 | 无；每次加载前调用添加一个一次性监听器 | `load` |
 | `observeResources.ts` | 获取一次缓冲的首屏加载资源快照 | 无；每次调用创建监听器或观察器 | `resource` |
 | `observeFetch.ts` | 包装当前 `window.fetch` | 被观察的所有者、原始 / 包装后的函数、最新回调 | `fetch` |
@@ -365,6 +372,44 @@ View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start
 ```
 
 服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 Measurement Source、Start Source 与 finalization reason。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
+
+## 6.C Key Content Paint：`markKeyContentPaint` / `observeKeyContentPaint`
+
+Key Content Paint（KCP）测量**当前 Page View** 从 View Start 到「应用声明的任务关键内容可见」的耗时。它：
+
+- 通过 `viewId` 关联活动 Page View；
+- 使用独立 `subType: "key-content-paint"`，**不是**标准 Web Vital，也**不是** View Largest Contentful Paint 的别名或回退；
+- 同一 Page View 上按 `keyContentName` 去重：同一名称最多一次，不同名称可并存；
+- 保留 Measurement Source 与 Start Source；样本不会进入 VLCP 的分位数。
+
+### 6.C.1 两种 Measurement Source
+
+| API | Measurement Source | 适用 |
+| --- | --- | --- |
+| `markKeyContentPaint(name, onReport?)` | `application-mark` | 业务在关键内容就绪时显式标记 |
+| `observeKeyContentPaint({ name, root?, onReport? })` | `declared-content` | 观察带 `data-key-content="<name>"` 的节点 |
+
+`declared-content` 只认可属性值与 `name` 完全一致的节点，并排除 retained、`data-view-skeleton` / `data-view-placeholder` / `data-view-spinner`、以及无文本且无媒体的空节点。面积再大的视觉块若未声明为该名称，也不会触发 KCP。
+
+### 6.C.2 报告契约
+
+```ts
+{
+  type: "performance";
+  subType: "key-content-paint";
+  name: "KCP";
+  value: number; // 相对 View Start 的毫秒
+  pageUrl: string;
+  viewId: string;
+  keyContentName: string;
+  measurementSource: "application-mark" | "declared-content";
+  startSource: PageViewStartSource;
+  pageName?: string;
+  routePattern?: string;
+}
+```
+
+服务端 `/api/v1/performance/view-paint` 支持 `metrics=key-content-paint` 与 `keyContentName` 过滤，并按关键内容名称分组；platform 在独立的「Key Content Paint」区展示，用语不暗示 Web Vital。Vue demo 的「大主图 → 小价格关键内容」对照最大视觉块与任务关键目标。
 
 ## 7. LCP：`observeLCP()`
 

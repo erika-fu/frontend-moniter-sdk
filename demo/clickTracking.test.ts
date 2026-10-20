@@ -77,6 +77,7 @@ describe("Vue demo click markers", () => {
             "view-fcp-declared-content",
             "view-fcp-application-mark",
             "view-lcp-candidate-replacement",
+            "key-content-vs-largest-visual",
         ]);
 
         const unmarked = [...container.querySelectorAll("button")].find(

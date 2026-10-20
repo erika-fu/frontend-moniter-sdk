@@ -430,4 +430,230 @@ describe("view paint metric aggregation", () => {
     ).json()) as { metrics: Array<{ metric: string; sampleCount: number }> };
     expect(mixed.metrics).toEqual([]);
   });
+
+  it("aggregates Key Content Paint by page and name without mixing into VLCP", () => {
+    const rows = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "key-content-paint",
+        data: {
+          value: 100,
+          pageName: "product-detail",
+          routePattern: "/products/:id",
+          keyContentName: "product-price",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 2,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/products/2",
+        subType: "key-content-paint",
+        data: {
+          value: 300,
+          pageName: "product-detail",
+          keyContentName: "product-price",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+      {
+        id: 3,
+        timestamp: 3_000,
+        pageUrl: "https://example.test/checkout",
+        subType: "key-content-paint",
+        data: {
+          value: 500,
+          routePattern: "/checkout",
+          keyContentName: "order-status",
+          measurementSource: "declared-content",
+          startSource: "history",
+        },
+      },
+      {
+        id: 4,
+        timestamp: 4_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "view-largest-contentful-paint",
+        data: {
+          value: 900,
+          pageName: "product-detail",
+          measurementSource: "declared-region",
+          startSource: "navigation",
+          finalizationReason: "timeout",
+        },
+      },
+    ];
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["key-content-paint"],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "key-content-paint",
+        sampleCount: 3,
+        p50: 300,
+        p75: 400,
+        p95: 480,
+        pages: [
+          expect.objectContaining({
+            pageKey: "product-detail",
+            sampleCount: 2,
+            p50: 200,
+          }),
+          expect.objectContaining({
+            pageKey: "/checkout",
+            sampleCount: 1,
+          }),
+        ],
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            measurementSource: "application-mark",
+            startSource: "navigation",
+            sampleCount: 2,
+          }),
+          expect.objectContaining({
+            measurementSource: "declared-content",
+            startSource: "history",
+            sampleCount: 1,
+          }),
+        ]),
+        keyContents: expect.arrayContaining([
+          expect.objectContaining({
+            keyContentName: "product-price",
+            sampleCount: 2,
+            p50: 200,
+          }),
+          expect.objectContaining({
+            keyContentName: "order-status",
+            sampleCount: 1,
+          }),
+        ]),
+      }),
+    ]);
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["key-content-paint"],
+        keyContentName: "product-price",
+      })[0],
+    ).toEqual(
+      expect.objectContaining({
+        sampleCount: 2,
+        keyContents: [
+          expect.objectContaining({
+            keyContentName: "product-price",
+            sampleCount: 2,
+          }),
+        ],
+      }),
+    );
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-largest-contentful-paint"],
+      })[0],
+    ).toEqual(
+      expect.objectContaining({
+        metric: "view-largest-contentful-paint",
+        sampleCount: 1,
+        p50: null,
+      }),
+    );
+  });
+
+  it("ingests Key Content Paint over HTTP with name filtering", async () => {
+    const databasePath = `/tmp/key-content-${Date.now()}-${Math.random()}.sqlite`;
+    databases.push(databasePath);
+    const baseUrl = await start(databasePath);
+
+    const response = await fetch(`${baseUrl}/api/v1/reportData`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        envelope(1_700_000_000_000, [
+          {
+            type: "performance",
+            subType: "key-content-paint",
+            name: "KCP",
+            value: 220,
+            pageUrl: "https://example.test/products/1",
+            viewId: "view-kcp-1",
+            keyContentName: "product-price",
+            pageName: "product-detail",
+            routePattern: "/products/:id",
+            measurementSource: "application-mark",
+            startSource: "navigation",
+          },
+          {
+            type: "performance",
+            subType: "key-content-paint",
+            name: "KCP",
+            value: 410,
+            pageUrl: "https://example.test/products/1",
+            viewId: "view-kcp-1",
+            keyContentName: "buy-button",
+            pageName: "product-detail",
+            measurementSource: "declared-content",
+            startSource: "navigation",
+          },
+          {
+            type: "performance",
+            subType: "view-largest-contentful-paint",
+            name: "VLCP",
+            value: 800,
+            pageUrl: "https://example.test/products/1",
+            viewId: "view-kcp-1",
+            pageName: "product-detail",
+            measurementSource: "declared-region",
+            startSource: "navigation",
+            finalizationReason: "timeout",
+          },
+        ]),
+      ),
+    });
+    expect(response.status).toBe(202);
+
+    const filtered = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=key-content-paint&keyContentName=product-price`,
+      )
+    ).json()) as {
+      metrics: Array<{
+        metric: string;
+        sampleCount: number;
+        keyContents: Array<{ keyContentName: string; sampleCount: number }>;
+      }>;
+    };
+    expect(filtered.metrics).toEqual([
+      expect.objectContaining({
+        metric: "key-content-paint",
+        sampleCount: 1,
+        keyContents: [
+          expect.objectContaining({
+            keyContentName: "product-price",
+            sampleCount: 1,
+          }),
+        ],
+      }),
+    ]);
+
+    const vlcp = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=view-largest-contentful-paint`,
+      )
+    ).json()) as {
+      metrics: Array<{ metric: string; sampleCount: number }>;
+    };
+    expect(vlcp.metrics).toEqual([
+      expect.objectContaining({
+        metric: "view-largest-contentful-paint",
+        sampleCount: 1,
+      }),
+    ]);
+  });
 });

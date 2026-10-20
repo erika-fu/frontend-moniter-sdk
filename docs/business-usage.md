@@ -503,6 +503,33 @@ observeViewLargestContentfulPaint({
 
 把导航、浮层、广告和推荐标成 `data-view-navigation`、`data-view-overlay`、`data-view-advertising`、`data-view-recommendation`。这些区域默认不能成为候选；确实要计入时，在该区域或候选上加 `data-view-lcp-include`。可信点击或按键、页面隐藏、下一次 Page View、或超时会结束观察。没有合格候选时没有样本，超时时长也不会变成 `value`。Vue demo 的「小候选 → 更大主内容」可同时看到候选替换和被排除的更大广告。字段与边界见 [Performance](performance.md) 第 6.B 节。
 
+### 11.3.3 Key Content Paint
+
+当任务关键内容（价格、订单状态、结果列表等）不是页面上最大的元素时，用 Key Content Paint 单独测量它从 View Start 到可见的耗时。它与 View LCP 相互独立，也不是标准 Web Vital：
+
+```ts
+import {
+  markKeyContentPaint,
+  observeKeyContentPaint,
+} from "frontend-moniter-sdk";
+
+// 方式 A：业务在关键内容渲染完成后显式标记
+async function showProduct(id: string) {
+  const product = await fetchProduct(id);
+  renderPrice(product.price);
+  markKeyContentPaint("product-price");
+}
+
+// 方式 B：声明命名目标，DOM 出现时计入
+observeKeyContentPaint({
+  name: "product-price",
+  root: "#product-main",
+});
+// 模板中：<p data-key-content="product-price">¥199</p>
+```
+
+同一 Page View 上不同名称可并存，同一名称只上报一次。不要把 KCP 样本解读成 VLCP，也不要用它替代文档级 LCP。Vue demo 的「大主图 → 小价格关键内容」可对照最大视觉块与任务关键目标。字段与边界见 [Performance](performance.md) 第 6.C 节。
+
 ### 11.4 React Router
 
 ```tsx

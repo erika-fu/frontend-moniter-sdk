@@ -23,11 +23,13 @@ import {
     observeXHR,
     type XHRReportData,
 } from "./observeXHR.js";
+import type { KeyContentPaintReportData } from "./observeKeyContentPaint.js";
 import type { ViewFirstContentfulPaintReportData } from "./observeViewFCP.js";
 import type { ViewLargestContentfulPaintReportData } from "./observeViewLCP.js";
 
 export * from "./observeFCP.js";
 export * from "./observeFetch.js";
+export * from "./observeKeyContentPaint.js";
 export * from "./observeLCP.js";
 export * from "./observeLoad.js";
 export * from "./observePaint.js";
@@ -42,6 +44,7 @@ export type PerformanceReportData =
     | LargestContentfulPaintReportData
     | ViewFirstContentfulPaintReportData
     | ViewLargestContentfulPaintReportData
+    | KeyContentPaintReportData
     | LoadReportData
     | ResourceLoadReportData
     | FetchReportData
