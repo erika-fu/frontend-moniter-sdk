@@ -1006,6 +1006,7 @@ export class SQLiteReportStore {
         return summarizeViewPaintMetrics(
             this.performanceEvents(query, [
                 "view-first-contentful-paint",
+                "view-largest-contentful-paint",
             ]),
             query,
         );

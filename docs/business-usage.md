@@ -488,6 +488,21 @@ observeViewFirstContentfulPaint({ root: "#page-main" });
 
 选择建议：路由组件能明确知道「主内容已就绪」时用 application-mark；希望 DOM 观察驱动时用 declared-content，并保证 skeleton / spinner / placeholder 带上排除属性。Vue demo 的「Skeleton → …」按钮可复现延迟内容场景。字段与边界见 [Performance](performance.md) 第 6.A 节。
 
+### 11.3.2 View Largest Contentful Paint
+
+在同一个 Page View 上，可以测量声明首屏区域里最大合格内容的绘制耗时。它与文档级 LCP 无关，候选变化不会逐条上报：
+
+```ts
+import { observeViewLargestContentfulPaint } from "frontend-moniter-sdk";
+
+observeViewLargestContentfulPaint({
+  root: "#above-the-fold",
+  timeout: 10_000,
+});
+```
+
+把导航、浮层、广告和推荐标成 `data-view-navigation`、`data-view-overlay`、`data-view-advertising`、`data-view-recommendation`。这些区域默认不能成为候选；确实要计入时，在该区域或候选上加 `data-view-lcp-include`。可信点击或按键、页面隐藏、下一次 Page View、或超时会结束观察。没有合格候选时没有样本，超时时长也不会变成 `value`。Vue demo 的「小候选 → 更大主内容」可同时看到候选替换和被排除的更大广告。字段与边界见 [Performance](performance.md) 第 6.B 节。
+
 ### 11.4 React Router
 
 ```tsx
@@ -582,6 +597,7 @@ import {
   stopObserveError,
   stopObserveFetch,
   stopObserveReplay,
+  stopObserveViewLargestContentfulPaint,
   stopObserveXHR,
 } from "frontend-moniter-sdk";
 
@@ -589,6 +605,7 @@ stopObserveBehavior();
 stopObserveError();
 stopObserveFetch();
 stopObserveReplay();
+stopObserveViewLargestContentfulPaint();
 stopObserveXHR();
 unsubscribe();
 ```

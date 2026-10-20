@@ -76,6 +76,7 @@ describe("Vue demo click markers", () => {
             "commit-redirect-navigation-orders",
             "view-fcp-declared-content",
             "view-fcp-application-mark",
+            "view-lcp-candidate-replacement",
         ]);
 
         const unmarked = [...container.querySelectorAll("button")].find(

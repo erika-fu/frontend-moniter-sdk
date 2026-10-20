@@ -33,7 +33,7 @@ interface PerformanceMetric {
   pages: Array<{ pageUrl: string; sampleCount: number; p50: number | null; p75: number | null; p95: number | null }>;
 }
 interface ViewPaintMetric {
-  metric: "view-first-contentful-paint";
+  metric: "view-first-contentful-paint" | "view-largest-contentful-paint";
   sampleCount: number;
   p50: number | null;
   p75: number | null;
@@ -42,6 +42,7 @@ interface ViewPaintMetric {
   sources: Array<{
     measurementSource: string;
     startSource: string;
+    finalizationReason: string;
     sampleCount: number;
     p50: number | null;
     p75: number | null;
@@ -340,7 +341,7 @@ async function loadPerformance(): Promise<void> {
   try {
     const [metricsResponse, viewPaintResponse, requestsResponse, resourcesResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/performance/metrics?${query}`),
-      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint`),
+      fetch(`${apiUrl}/api/v1/performance/view-paint?${query}&metrics=view-first-contentful-paint,view-largest-contentful-paint`),
       fetch(`${apiUrl}/api/v1/performance/requests?${listQuery}`),
       fetch(`${apiUrl}/api/v1/performance/resources?${listQuery}`),
     ]);
@@ -363,6 +364,10 @@ async function loadPerformance(): Promise<void> {
 
 function metricLabel(metric: MetricName): string {
   return { "first-paint": "FP", "first-contentful-paint": "FCP", "largest-contentful-paint": "LCP", load: "Load" }[metric];
+}
+
+function viewPaintLabel(metric: ViewPaintMetric["metric"]): string {
+  return metric === "view-largest-contentful-paint" ? "VLCP" : "VFCP";
 }
 
 function duration(value: number | null): string {
@@ -712,20 +717,20 @@ onUnmounted(() => {
         <div class="section-heading">
           <div>
             <p class="eyebrow">View paint</p>
-            <h2 id="view-paint-title">View First Contentful Paint</h2>
+            <h2 id="view-paint-title">View Paint</h2>
           </div>
         </div>
-        <p class="result-count">相对 Page View 的 View Start，与文档级 FCP 分开统计；聚合键优先 Page Name，否则 Route Pattern。</p>
+        <p class="result-count">相对 Page View 的 View Start。VFCP 与文档级 FCP 分开，VLCP 与文档级 LCP 分开；聚合键优先 Page Name，否则 Route Pattern。</p>
         <div class="summary-grid">
           <article v-for="metric in performance.viewPaint" :key="metric.metric" class="metric">
-            <span>VFCP · {{ metric.sampleCount }} 个样本</span>
+            <span>{{ viewPaintLabel(metric.metric) }} · {{ metric.sampleCount }} 个样本</span>
             <strong>{{ duration(metric.p50) }}</strong>
             <small>P75 {{ duration(metric.p75) }} · P95 {{ duration(metric.p95) }}</small>
           </article>
         </div>
         <div class="performance-grid">
           <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-pages`" class="performance-panel">
-            <div class="section-heading"><h3>按页面聚合</h3><span>{{ metric.sampleCount }} 个样本</span></div>
+            <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 按页面聚合</h3><span>{{ metric.sampleCount }} 个样本</span></div>
             <p v-if="!metric.pages.length" class="state">当前筛选条件下没有 View Paint 数据</p>
             <ol v-else class="rank-list">
               <li v-for="page in metric.pages.slice(0, 8)" :key="page.pageKey">
@@ -735,14 +740,15 @@ onUnmounted(() => {
             </ol>
           </article>
           <article v-for="metric in performance.viewPaint" :key="`${metric.metric}-sources`" class="performance-panel">
-            <div class="section-heading"><h3>Measurement / Start Source</h3></div>
+            <div class="section-heading"><h3>{{ viewPaintLabel(metric.metric) }} 来源与最终确定</h3></div>
             <p v-if="!metric.sources.length" class="state">暂无来源维度</p>
             <table v-else>
-              <thead><tr><th>Measurement</th><th>Start</th><th>样本</th><th>P50</th></tr></thead>
+              <thead><tr><th>Measurement</th><th>Start</th><th>Finalization</th><th>样本</th><th>P50</th></tr></thead>
               <tbody>
-                <tr v-for="source in metric.sources" :key="`${source.measurementSource}-${source.startSource}`">
+                <tr v-for="source in metric.sources" :key="`${metric.metric}-${source.measurementSource}-${source.startSource}-${source.finalizationReason}`">
                   <td>{{ source.measurementSource }}</td>
                   <td>{{ source.startSource }}</td>
+                  <td>{{ source.finalizationReason || "—" }}</td>
                   <td>{{ source.sampleCount }}</td>
                   <td>{{ duration(source.p50) }}</td>
                 </tr>

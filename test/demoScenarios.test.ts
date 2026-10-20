@@ -8,14 +8,17 @@ import {
     requestWithFetch,
     requestWithXHR,
     runSkeletonToContentScenario,
+    runViewLargestContentfulPaintScenario,
     switchRoute,
 } from "../demo/src/scenarios.js";
 import { stopObserveBehavior } from "../src/behavior/index.js";
 import { resetViewFirstContentfulPaint } from "../src/performance/observeViewFCP.js";
+import { resetViewLargestContentfulPaint } from "../src/performance/observeViewLCP.js";
 
 describe("demo monitoring scenarios", () => {
     afterEach(() => {
         resetViewFirstContentfulPaint();
+        resetViewLargestContentfulPaint();
         stopObserveBehavior();
         vi.unstubAllGlobals();
         vi.useRealTimers();
@@ -140,6 +143,79 @@ describe("demo monitoring scenarios", () => {
                     r.measurementSource === "declared-content",
             ),
         ).toBe(true);
+
+        scenario.dispose();
+        unsubscribe();
+    });
+
+    it("shows candidate replacement and a larger excluded region before one view LCP report", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        let clock = 1_000;
+        vi.spyOn(performance, "now").mockImplementation(() => clock);
+        const reports: Array<{
+            subType?: string;
+            value?: number;
+            finalizationReason?: string;
+            measurementSource?: string;
+        }> = [];
+        const { subscribe } = await import("../src/index.js");
+        const unsubscribe = subscribe((data) => {
+            reports.push(
+                data as {
+                    subType?: string;
+                    value?: number;
+                    finalizationReason?: string;
+                    measurementSource?: string;
+                },
+            );
+        });
+
+        window.history.replaceState({}, "", "/demo");
+        const scenario = runViewLargestContentfulPaintScenario({
+            replacementDelay: 400,
+            timeout: 1_000,
+        });
+        const area = (selector: string) => {
+            const element = scenario.root.querySelector(selector) as HTMLElement | null;
+            const width = Number.parseFloat(element?.style.width ?? "0");
+            const height = Number.parseFloat(element?.style.height ?? "0");
+            return width * height;
+        };
+        expect(scenario.phase).toBe("small");
+        expect(area("[data-view-lcp-candidate='small']")).toBeGreaterThan(0);
+        expect(area("[data-view-advertising] [data-view-lcp-excluded]")).toBeGreaterThan(
+            area("[data-view-lcp-candidate='small']"),
+        );
+        expect(
+            reports.some((report) => report.subType === "view-largest-contentful-paint"),
+        ).toBe(false);
+
+        clock = 1_400;
+        await vi.advanceTimersByTimeAsync(400);
+        await Promise.resolve();
+        expect(scenario.phase).toBe("replaced");
+        expect(area("[data-view-lcp-candidate='large']")).toBeGreaterThan(
+            area("[data-view-lcp-candidate='small']"),
+        );
+        expect(area("[data-view-advertising] [data-view-lcp-excluded]")).toBeGreaterThan(
+            area("[data-view-lcp-candidate='large']"),
+        );
+        expect(
+            reports.some((report) => report.subType === "view-largest-contentful-paint"),
+        ).toBe(false);
+
+        clock = 2_000;
+        await vi.advanceTimersByTimeAsync(600);
+        const reported = reports.filter(
+            (report) => report.subType === "view-largest-contentful-paint",
+        );
+        expect(reported).toEqual([
+            expect.objectContaining({
+                value: 400,
+                finalizationReason: "timeout",
+                measurementSource: "declared-region",
+            }),
+        ]);
 
         scenario.dispose();
         unsubscribe();

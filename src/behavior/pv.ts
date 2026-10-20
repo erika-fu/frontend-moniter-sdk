@@ -106,6 +106,21 @@ export interface ActivePageView {
 }
 
 let activePageView: ActivePageView | undefined;
+const activePageViewListeners = new Set<(pageView: ActivePageView) => void>();
+
+/**
+ * 订阅后续成功建立的 Page View。
+ *
+ * 当前这次调用不会补发已经存在的 Page View；停止行为监控不会移除订阅。
+ */
+export function subscribeActivePageView(
+    listener: (pageView: ActivePageView) => void,
+): () => void {
+    activePageViewListeners.add(listener);
+    return () => {
+        activePageViewListeners.delete(listener);
+    };
+}
 
 /**
  * 返回最近一次成功上报的 Page View 上下文；尚无 Page View 时为 `undefined`。
@@ -220,6 +235,11 @@ export function observePV(
         },
         onReport,
     );
+    if (activePageView) {
+        for (const listener of [...activePageViewListeners]) {
+            listener(activePageView);
+        }
+    }
 }
 
 export default observePV;

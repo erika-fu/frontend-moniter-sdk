@@ -4,9 +4,12 @@ import {
     markNavigationRedirect,
     markViewFirstContentfulPaint,
     observeViewFirstContentfulPaint,
+    observeViewLargestContentfulPaint,
     resetViewFirstContentfulPaint,
+    resetViewLargestContentfulPaint,
     startNavigationAttempt,
     stopObserveViewFirstContentfulPaint,
+    stopObserveViewLargestContentfulPaint,
 } from "../../src/index.js";
 
 export function requestWithFetch(success: boolean): void {
@@ -178,6 +181,99 @@ export function runSkeletonToContentScenario(
         dispose() {
             window.clearTimeout(timer);
             stopObserveViewFirstContentfulPaint();
+            root.remove();
+            phase = "idle";
+        },
+    };
+}
+
+export type ViewLargestContentfulPaintPhase = "small" | "replaced" | "idle";
+
+export interface ViewLargestContentfulPaintScenario {
+    root: HTMLElement;
+    readonly phase: ViewLargestContentfulPaintPhase;
+    dispose: () => void;
+}
+
+/**
+ * 首屏区内先放一个小候选，同时展示更大的广告（默认排除）。
+ * 延迟后插入更大的合格内容，替换本地候选；超时后只上报一次最终值。
+ */
+export function runViewLargestContentfulPaintScenario(options?: {
+    replacementDelay?: number;
+    timeout?: number;
+}): ViewLargestContentfulPaintScenario {
+    resetViewLargestContentfulPaint();
+    const replacementDelay = options?.replacementDelay ?? 700;
+    const timeout = options?.timeout ?? 8_000;
+
+    const pageUrl = new URL(
+        `#/scenario/view-lcp?t=${Date.now()}`,
+        window.location.href,
+    ).href;
+    startNavigationAttempt();
+    commitNavigationAttempt({
+        pageName: "view-lcp",
+        routePattern: "/scenario/view-lcp",
+        pageUrl,
+    });
+    window.location.hash = "#/scenario/view-lcp";
+
+    const root = document.createElement("section");
+    root.setAttribute("data-view-lcp-demo", "");
+    root.setAttribute("aria-label", "view largest contentful paint scenario");
+    document.body.append(root);
+
+    const status = document.createElement("p");
+    status.setAttribute("data-view-lcp-status", "");
+    status.textContent =
+        "小候选已出现。更大的广告被排除，候选替换前不会上报。";
+    root.append(status);
+
+    const region = document.createElement("div");
+    region.setAttribute("data-view-lcp-root", "");
+    root.append(region);
+
+    const small = document.createElement("p");
+    small.setAttribute("data-view-lcp-candidate", "small");
+    small.style.width = "120px";
+    small.style.height = "48px";
+    small.textContent = "摘要";
+    region.append(small);
+
+    const advertising = document.createElement("aside");
+    advertising.setAttribute("data-view-advertising", "");
+    const excluded = document.createElement("p");
+    excluded.setAttribute("data-view-lcp-excluded", "");
+    excluded.style.width = "640px";
+    excluded.style.height = "360px";
+    excluded.textContent = "更大的广告，默认不计入";
+    advertising.append(excluded);
+    region.append(advertising);
+
+    observeViewLargestContentfulPaint({ root: region, timeout });
+
+    let phase: ViewLargestContentfulPaintPhase = "small";
+    const timer = window.setTimeout(() => {
+        const large = document.createElement("p");
+        large.setAttribute("data-view-lcp-candidate", "large");
+        large.style.width = "360px";
+        large.style.height = "200px";
+        large.textContent = "主内容已替换为更大的候选";
+        region.append(large);
+        phase = "replaced";
+        status.textContent =
+            "更大的合格内容已替换候选。广告仍然更大，但不会成为候选。";
+    }, replacementDelay);
+
+    return {
+        root,
+        get phase() {
+            return phase;
+        },
+        dispose() {
+            window.clearTimeout(timer);
+            stopObserveViewLargestContentfulPaint();
             root.remove();
             phase = "idle";
         },

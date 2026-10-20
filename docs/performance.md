@@ -2,12 +2,13 @@
 
 本文是 `src/performance/` 的权威实现指南，说明 SDK 如何采集性能数据、各采集器为何使用特定浏览器 API、报告如何经过共享上报管道，以及数据不得被过度解读的边界。
 
-该模块当前会产生八种报告子类型：
+该模块当前会产生九种报告子类型：
 
 - `first-paint`
 - `first-contentful-paint`
 - `largest-contentful-paint`
 - `view-first-contentful-paint`
+- `view-largest-contentful-paint`
 - `load`
 - `resource`
 - `fetch`
@@ -16,6 +17,8 @@
 它不采集 CLS、INP、作为独立 Web Vital 的 TTFB、长任务、内存、FPS 或自定义标记。资源报告确实包含一个派生字段 `ttfb`，但该值描述的是单个资源请求，而非页面级 TTFB Web Vital。
 
 `view-first-contentful-paint`（View First Contentful Paint）是 Page View 作用域的 View Paint Metric，与文档级 `first-contentful-paint` 相互独立；不会由 `monitor.performance()` 自动启动，需业务调用 `markViewFirstContentfulPaint()` 或 `observeViewFirstContentfulPaint()`。
+
+`view-largest-contentful-paint`（View Largest Contentful Paint）同样属于 Page View，与文档级 `largest-contentful-paint` 相互独立。它观察声明的首屏内容区，候选只保留在本地，每个 `viewId` 最多上报一次最终值。不会由 `monitor.performance()` 自动启动，需业务调用 `observeViewLargestContentfulPaint()`。
 
 性能采集器只创建报告并将其交给 SDK 全局分发器。安装与应用集成见 [业务使用](business-usage.md)，共享缓存 / envelope / 传输行为见 [SDK 入口与内部机制](sdk-internals.md)，端点、存储、保留和查询契约见 [服务端文档](server.md)。
 
@@ -62,10 +65,12 @@ import {
   markViewFirstContentfulPaint,
   observeViewFirstContentfulPaint,
   stopObserveViewFirstContentfulPaint,
+  observeViewLargestContentfulPaint,
+  stopObserveViewLargestContentfulPaint,
 } from "frontend-moniter-sdk";
 ```
 
-默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR 与 View FCP 观察器具有显式停止 API。
+默认导出不暴露这些细粒度函数。`observePerformance()` 没有聚合停止函数；只有 Fetch、XHR、View FCP 与 View LCP 观察器具有显式停止 API。
 
 ## 2. 模块职责与生命周期
 
@@ -76,6 +81,7 @@ import {
 | `observeFCP.ts` | 适配 `web-vitals` FCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `first-contentful-paint` |
 | `observeLCP.ts` | 适配 `web-vitals` LCP 输出 | 每次调用的生命周期由 `web-vitals` 持有 | `largest-contentful-paint` |
 | `observeViewFCP.ts` | Page View 作用域的 View First Contentful Paint | 已上报 `viewId`、声明区 MutationObserver | `view-first-contentful-paint` |
+| `observeViewLCP.ts` | Page View 作用域的 View Largest Contentful Paint | 已上报 `viewId`、声明区 MutationObserver、最终确定监听与超时 | `view-largest-contentful-paint` |
 | `observeLoad.ts` | 测量文档加载完成 | 无；每次加载前调用添加一个一次性监听器 | `load` |
 | `observeResources.ts` | 获取一次缓冲的首屏加载资源快照 | 无；每次调用创建监听器或观察器 | `resource` |
 | `observeFetch.ts` | 包装当前 `window.fetch` | 被观察的所有者、原始 / 包装后的函数、最新回调 | `fetch` |
@@ -305,6 +311,60 @@ View First Contentful Paint（VFCP）测量**当前 Page View** 从 View Start �
 ```
 
 服务端查询见 [Server](server.md) 的 `/api/v1/performance/view-paint`；platform 在性能页单独展示 VFCP，不与文档 Web Vitals 卡片合并。
+
+## 6.B View Largest Contentful Paint：`observeViewLargestContentfulPaint`
+
+View Largest Contentful Paint（VLCP）测量**当前 Page View** 从 View Start 到「声明首屏内容区里最大合格候选被绘制」的耗时。它：
+
+- 通过 `viewId` 关联调用观察时的 Page View；
+- 使用独立 `subType: "view-largest-contentful-paint"`，不得与文档级 `largest-contentful-paint` 混读；
+- 候选替换只发生在本地，每个 `viewId` 最多上报一次最终值；
+- 没有合格候选时不上报，不会把 `0` 或超时时长写成样本；
+- 保留 Measurement Source（`declared-region`）、Start Source，以及最终确定原因。
+
+### 6.B.1 候选与排除
+
+只统计声明根节点内、有直接文本或 `img` / `svg` / `canvas` / `video` 的元素。面积优先用边框盒；边框盒为空时使用元素上显式的 px 宽高。View Start 时已经存在的 retained 节点、`data-view-skeleton` / `data-view-placeholder` / `data-view-spinner` 不计。
+
+默认排除这些共享或非主区域，除非该区域或其中的候选带 `data-view-lcp-include`：
+
+- `data-view-navigation`
+- `data-view-overlay`
+- `data-view-advertising`
+- `data-view-recommendation`
+
+声明区域之外的内容即使更大也不会成为候选。更大的合格内容会替换当前候选，并记下它达到该面积的时刻；更小的后续内容不会替换。`value` 是这个时刻相对 View Start 的毫秒数。
+
+### 6.B.2 最终确定
+
+| 原因 | 触发 |
+| --- | --- |
+| `interaction` | 可信的 `pointerdown` 或 `keydown`（`event.isTrusted`） |
+| `page-hidden` | `visibilityState` 变为 `hidden`，或 `pagehide` |
+| `next-page-view` | 下一个 Page View 成功建立 |
+| `timeout` | 观察超时，默认 10 秒，可用 `timeout` 覆盖 |
+
+超时只结束观察。若当时已有合格候选，上报该候选的绘制耗时；若没有，则不产生样本。`stopObserveViewLargestContentfulPaint()` 会拆掉监听和计时器且不上报。
+
+### 6.B.3 报告契约
+
+```ts
+{
+  type: "performance";
+  subType: "view-largest-contentful-paint";
+  name: "VLCP";
+  value: number;
+  pageUrl: string;
+  viewId: string;
+  measurementSource: "declared-region";
+  startSource: PageViewStartSource;
+  finalizationReason: "interaction" | "page-hidden" | "next-page-view" | "timeout";
+  pageName?: string;
+  routePattern?: string;
+}
+```
+
+服务端 `/api/v1/performance/view-paint` 按 Page Name（否则 Route Pattern）聚合，并保留 Measurement Source、Start Source 与 finalization reason。platform 的 View Paint 区单独展示 VLCP，不与文档级 LCP 卡片合并。Vue demo 的「小候选 → 更大主内容」会同时展示候选替换和被排除的更大广告。
 
 ## 7. LCP：`observeLCP()`
 

@@ -239,4 +239,195 @@ describe("view paint metric aggregation", () => {
     ).toBe(1);
     store.close();
   });
+
+  it("aggregates view LCP with finalization reason and leaves document LCP untouched", () => {
+    const rows = [
+      {
+        id: 1,
+        timestamp: 1_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "view-largest-contentful-paint",
+        data: {
+          value: 100,
+          pageName: "product-detail",
+          routePattern: "/products/:id",
+          measurementSource: "declared-region",
+          startSource: "navigation",
+          finalizationReason: "interaction",
+        },
+      },
+      {
+        id: 2,
+        timestamp: 2_000,
+        pageUrl: "https://example.test/products/2",
+        subType: "view-largest-contentful-paint",
+        data: {
+          value: 300,
+          pageName: "product-detail",
+          measurementSource: "declared-region",
+          startSource: "navigation",
+          finalizationReason: "interaction",
+        },
+      },
+      {
+        id: 3,
+        timestamp: 3_000,
+        pageUrl: "https://example.test/cart",
+        subType: "view-largest-contentful-paint",
+        data: {
+          value: 500,
+          routePattern: "/cart",
+          measurementSource: "declared-region",
+          startSource: "history",
+          finalizationReason: "timeout",
+        },
+      },
+      {
+        id: 4,
+        timestamp: 4_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "largest-contentful-paint",
+        data: { value: 50 },
+      },
+      {
+        id: 5,
+        timestamp: 5_000,
+        pageUrl: "https://example.test/products/1",
+        subType: "view-first-contentful-paint",
+        data: {
+          value: 40,
+          pageName: "product-detail",
+          measurementSource: "application-mark",
+          startSource: "navigation",
+        },
+      },
+    ];
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-largest-contentful-paint"],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        metric: "view-largest-contentful-paint",
+        sampleCount: 3,
+        p50: 300,
+        p75: 400,
+        p95: 480,
+        pages: [
+          expect.objectContaining({
+            pageKey: "product-detail",
+            sampleCount: 2,
+            p50: 200,
+          }),
+          expect.objectContaining({
+            pageKey: "/cart",
+            sampleCount: 1,
+          }),
+        ],
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            measurementSource: "declared-region",
+            startSource: "navigation",
+            finalizationReason: "interaction",
+            sampleCount: 2,
+          }),
+          expect.objectContaining({
+            measurementSource: "declared-region",
+            startSource: "history",
+            finalizationReason: "timeout",
+            sampleCount: 1,
+          }),
+        ]),
+      }),
+    ]);
+
+    expect(
+      summarizeViewPaintMetrics(rows, {
+        metrics: ["view-first-contentful-paint"],
+      })[0]?.sampleCount,
+    ).toBe(1);
+  });
+
+  it("ingests view LCP over HTTP without merging it into document LCP", async () => {
+    const databasePath = `/tmp/view-lcp-${Date.now()}-${Math.random()}.sqlite`;
+    databases.push(databasePath);
+    const baseUrl = await start(databasePath);
+
+    const response = await fetch(`${baseUrl}/api/v1/reportData`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        envelope(1_700_000_000_000, [
+          {
+            type: "performance",
+            subType: "view-largest-contentful-paint",
+            name: "VLCP",
+            value: 420,
+            pageUrl: "https://example.test/products/1",
+            viewId: "view-lcp-1",
+            pageName: "product-detail",
+            routePattern: "/products/:id",
+            measurementSource: "declared-region",
+            startSource: "navigation",
+            finalizationReason: "page-hidden",
+          },
+          {
+            type: "performance",
+            subType: "largest-contentful-paint",
+            name: "LCP",
+            value: 900,
+            pageUrl: "https://example.test/products/1",
+          },
+        ]),
+      ),
+    });
+    expect(response.status).toBe(202);
+
+    const viewPaint = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=view-largest-contentful-paint`,
+      )
+    ).json()) as {
+      metrics: Array<{
+        metric: string;
+        sampleCount: number;
+        sources: Array<{ finalizationReason: string; measurementSource: string }>;
+      }>;
+    };
+    expect(viewPaint.metrics).toEqual([
+      expect.objectContaining({
+        metric: "view-largest-contentful-paint",
+        sampleCount: 1,
+        sources: [
+          expect.objectContaining({
+            measurementSource: "declared-region",
+            finalizationReason: "page-hidden",
+            sampleCount: 1,
+          }),
+        ],
+      }),
+    ]);
+
+    const documentMetrics = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/metrics?appId=view-paint-app&metrics=largest-contentful-paint`,
+      )
+    ).json()) as {
+      metrics: Array<{ metric: string; sampleCount: number }>;
+    };
+    expect(documentMetrics.metrics).toEqual([
+      expect.objectContaining({
+        metric: "largest-contentful-paint",
+        sampleCount: 1,
+      }),
+    ]);
+
+    const mixed = (await (
+      await fetch(
+        `${baseUrl}/api/v1/performance/view-paint?appId=view-paint-app&metrics=largest-contentful-paint`,
+      )
+    ).json()) as { metrics: Array<{ metric: string; sampleCount: number }> };
+    expect(mixed.metrics).toEqual([]);
+  });
 });

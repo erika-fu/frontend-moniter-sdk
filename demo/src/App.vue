@@ -15,15 +15,19 @@ import {
     requestWithFetch,
     requestWithXHR,
     runSkeletonToContentScenario,
+    runViewLargestContentfulPaintScenario,
     switchRoute,
     throwJavaScriptError,
     type SkeletonToContentResult,
+    type ViewLargestContentfulPaintScenario,
 } from "./scenarios";
 
 const showVueError = ref(false);
 const unmarkedComparisonMessage = ref("");
 const viewFcpStatus = ref("");
+const viewLcpStatus = ref("");
 let activeViewFcpScenario: SkeletonToContentResult | undefined;
+let activeViewLcpScenario: ViewLargestContentfulPaintScenario | undefined;
 const monitorUrl =
     import.meta.env.VITE_MONITOR_URL ??
     "http://localhost:9800/api/v1/reportData";
@@ -43,6 +47,8 @@ onBeforeUnmount(() => {
     stopReplayRecording();
     activeViewFcpScenario?.dispose();
     activeViewFcpScenario = undefined;
+    activeViewLcpScenario?.dispose();
+    activeViewLcpScenario = undefined;
 });
 onMounted(startReplayRecording);
 
@@ -71,6 +77,22 @@ function runViewFcpScenario(
                     : "已调用 markViewFirstContentfulPaint（application-mark）";
         }
     }, 700);
+}
+
+function runViewLcpScenario(): void {
+    activeViewLcpScenario?.dispose();
+    viewLcpStatus.value =
+        "已展示小候选。更大的广告被排除，候选替换前不会上报。";
+    activeViewLcpScenario = runViewLargestContentfulPaintScenario({
+        replacementDelay: 700,
+        timeout: 8_000,
+    });
+    window.setTimeout(() => {
+        if (activeViewLcpScenario?.phase === "replaced") {
+            viewLcpStatus.value =
+                "主内容已替换为更大的候选。广告仍然更大，但不会成为 VLCP。点击页面会以 interaction 结束观察，否则 8 秒后以 timeout 上报一次。";
+        }
+    }, 800);
 }
 </script>
 
@@ -230,6 +252,31 @@ function runViewFcpScenario(
                 </div>
                 <p v-if="viewFcpStatus" class="section-note" role="status">
                     {{ viewFcpStatus }}
+                </p>
+            </section>
+
+            <section class="scenario-section" aria-labelledby="view-lcp-title">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">VIEW PAINT</p>
+                        <h2 id="view-lcp-title">View Largest Contentful Paint</h2>
+                    </div>
+                </div>
+                <p class="section-note">
+                    声明首屏区域后，小候选会被更大的主内容替换；旁边更大的广告带
+                    <code>data-view-advertising</code>，默认不能成为候选。最终值只在可信交互、页面隐藏、下一次 Page View 或超时后上报一次，超时时长本身不会变成指标值。
+                </p>
+                <div class="scenario-grid">
+                    <button
+                        type="button"
+                        clstag="view-lcp-candidate-replacement"
+                        @click="runViewLcpScenario"
+                    >
+                        小候选 → 更大主内容
+                    </button>
+                </div>
+                <p v-if="viewLcpStatus" class="section-note" role="status">
+                    {{ viewLcpStatus }}
                 </p>
             </section>
 

@@ -4,7 +4,14 @@ export type PerformanceMetricName =
     | "largest-contentful-paint"
     | "load";
 
-export type ViewPaintMetricName = "view-first-contentful-paint";
+export type ViewPaintMetricName =
+    | "view-first-contentful-paint"
+    | "view-largest-contentful-paint";
+
+const VIEW_PAINT_METRICS: ViewPaintMetricName[] = [
+    "view-first-contentful-paint",
+    "view-largest-contentful-paint",
+];
 
 export interface PerformanceEventRow {
     id: number;
@@ -67,6 +74,7 @@ export interface ViewPaintMetricPoint {
     sources: Array<{
         measurementSource: string;
         startSource: string;
+        finalizationReason: string;
         sampleCount: number;
         p50: number | null;
         p75: number | null;
@@ -235,10 +243,7 @@ function viewPaintValue(
     row: PerformanceEventRow,
     metric: ViewPaintMetricName,
 ): number | null {
-    if (
-        metric === "view-first-contentful-paint" &&
-        row.subType === "view-first-contentful-paint"
-    ) {
+    if (row.subType === metric) {
         return number(row.data.value);
     }
     return null;
@@ -246,15 +251,16 @@ function viewPaintValue(
 
 /**
  * 按 Page Name（无则 Route Pattern）聚合 View Paint Metrics，
- * 并保留 Measurement Source / Start Source 维度；不与文档级 FCP 混用。
+ * 并保留 Measurement Source、Start Source 与 finalization reason；
+ * 不与文档级 FCP / LCP 混用。
  */
 export function summarizeViewPaintMetrics(
     rows: PerformanceEventRow[],
     query: ViewPaintMetricQuery,
 ): ViewPaintMetricPoint[] {
     const requested = query.metrics?.length
-        ? query.metrics
-        : (["view-first-contentful-paint"] as ViewPaintMetricName[]);
+        ? query.metrics.filter((metric) => VIEW_PAINT_METRICS.includes(metric))
+        : VIEW_PAINT_METRICS;
 
     return requested.map((metric) => {
         const samples = rows.flatMap((row) => {
@@ -275,7 +281,11 @@ export function summarizeViewPaintMetrics(
                 typeof sample.row.data.startSource === "string"
                     ? sample.row.data.startSource
                     : "(unknown)";
-            const sourceKey = `${measurementSource}\u001f${startSource}`;
+            const finalizationReason =
+                typeof sample.row.data.finalizationReason === "string"
+                    ? sample.row.data.finalizationReason
+                    : "";
+            const sourceKey = `${measurementSource}\u001f${startSource}\u001f${finalizationReason}`;
             sources.set(sourceKey, [
                 ...(sources.get(sourceKey) ?? []),
                 sample.value,
@@ -298,11 +308,15 @@ export function summarizeViewPaintMetrics(
                 .slice(0, 20),
             sources: [...sources.entries()]
                 .map(([sourceKey, sourceValues]) => {
-                    const [measurementSource = "(unknown)", startSource = "(unknown)"] =
-                        sourceKey.split("\u001f");
+                    const [
+                        measurementSource = "(unknown)",
+                        startSource = "(unknown)",
+                        finalizationReason = "",
+                    ] = sourceKey.split("\u001f");
                     return {
                         measurementSource,
                         startSource,
+                        finalizationReason,
                         ...statistics(sourceValues),
                     };
                 })
@@ -312,7 +326,10 @@ export function summarizeViewPaintMetrics(
                         left.measurementSource.localeCompare(
                             right.measurementSource,
                         ) ||
-                        left.startSource.localeCompare(right.startSource),
+                        left.startSource.localeCompare(right.startSource) ||
+                        left.finalizationReason.localeCompare(
+                            right.finalizationReason,
+                        ),
                 ),
         };
     });
