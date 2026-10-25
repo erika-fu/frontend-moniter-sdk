@@ -14,6 +14,10 @@ npm install
 npm run check
 ```
 
+## 线上 Demo（Fly.io）
+
+同源单应用 `frontend-moniter-demo`：`/` 为 demo，`/platform/` 为看板，`/api/v1` 为上报与查询。部署步骤见 [docs/deploy-demo.md](docs/deploy-demo.md)。
+
 ## Workspace 命令
 
 SDK、server、platform 和 demo 通过 npm workspaces 管理：

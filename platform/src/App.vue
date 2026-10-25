@@ -124,7 +124,14 @@ interface SourceMapRecord {
 }
 type SourceMapUploadState = "idle" | "uploading" | "success" | "error";
 
-const apiUrl = import.meta.env.VITE_SERVER_URL ?? "http://localhost:9800";
+// Explicit URL wins. Otherwise: dev → localhost server; prod → same-origin.
+const configuredServerUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
+const apiUrl =
+  configuredServerUrl !== undefined && configuredServerUrl !== ""
+    ? configuredServerUrl
+    : import.meta.env.DEV
+      ? "http://localhost:9800"
+      : "";
 const apps = ref<AppInfo[]>([]);
 const selectedAppId = ref("");
 const from = ref("");

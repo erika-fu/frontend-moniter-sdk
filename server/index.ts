@@ -4,6 +4,7 @@ import {
     type Server,
     type ServerResponse,
 } from "node:http";
+import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveErrorStack, type StackResolutionOptions } from "./errorStack.js";
 import { isParseableSourceMap } from "./sourceMaps.js";
@@ -12,6 +13,7 @@ import {
     SQLiteReportStore,
     type SourceMapUpload,
 } from "./store.js";
+import { demoSourceMapUrl, tryServeStatic } from "./static.js";
 import type { ErrorStatus } from "./errorIssues.js";
 import type { PerformanceMetricName } from "./performance.js";
 
@@ -23,6 +25,8 @@ export interface ReportServerOptions {
     corsOrigins?: string[] | undefined;
     reportMaxBytes?: number | undefined;
     sourceMapMaxBytes?: number | undefined;
+    /** Directory containing `demo/` and `platform/` build output. */
+    staticRoot?: string | undefined;
 }
 
 export interface ReportStore {
@@ -425,6 +429,10 @@ export function createReportServer(
     const origins = configuredOrigins(options);
     const reportMaxBytes = options.reportMaxBytes ?? REPORT_MAX_BYTES;
     const sourceMapMaxBytes = options.sourceMapMaxBytes ?? SOURCE_MAP_MAX_BYTES;
+    const staticRoot = options.staticRoot ??
+        (process.env.STATIC_ROOT
+            ? resolve(process.env.STATIC_ROOT)
+            : undefined);
 
     return createServer((request, response) => {
         void (async () => {
@@ -696,6 +704,19 @@ export function createReportServer(
                 sendJson(response, 200, store.list(), headers);
                 return;
             }
+            if (
+                staticRoot &&
+                !url.pathname.startsWith("/api") &&
+                tryServeStatic(
+                    request,
+                    response,
+                    staticRoot,
+                    url.pathname,
+                    headers,
+                )
+            ) {
+                return;
+            }
             send(response, 404, "Not Found", headers);
             return;
         }
@@ -818,6 +839,9 @@ if (
         10,
     );
     const store = new SQLiteReportStore(databasePath);
+    const staticRoot = process.env.STATIC_ROOT
+        ? resolve(process.env.STATIC_ROOT)
+        : undefined;
     const cleanup = () => {
         const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
         store.cleanupBefore(cutoff);
@@ -827,11 +851,9 @@ if (
     cleanupTimer.unref();
     const server = createReportServer({
         store,
+        staticRoot,
         stackResolution: {
-            sourceMapUrl: (fileUrl) =>
-                fileUrl.startsWith("http://localhost:4173/")
-                    ? `${fileUrl}.map`
-                    : undefined,
+            sourceMapUrl: (fileUrl) => demoSourceMapUrl(fileUrl),
         },
     });
 

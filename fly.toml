@@ -1,0 +1,46 @@
+# Fly.io single-app demo: demo + platform + API on one origin.
+# App URL: https://frontend-moniter-demo.fly.dev
+#
+# First-time setup (once):
+#   fly apps create frontend-moniter-demo
+#   fly volumes create moniter_data --region sin --size 1
+#   fly deploy
+#
+# See docs/deploy-demo.md for details.
+
+app = "frontend-moniter-demo"
+primary_region = "sin"
+
+[build]
+
+[env]
+  PORT = "8080"
+  REPORT_DB_PATH = "/data/monitoring.sqlite"
+  RETENTION_DAYS = "3"
+  STATIC_ROOT = "/app/public"
+  DEMO_ORIGINS = "https://frontend-moniter-demo.fly.dev"
+  CORS_ORIGINS = "*"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/v1/health"
+
+[[mounts]]
+  source = "moniter_data"
+  destination = "/data"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+dist-server
+.git
+.scratch
+.cursor
+coverage
+server/data
+**/*.sqlite
+**/*.sqlite-*
+**/.vite
+demo/dist
+platform/dist
+react-demo/dist
+*.log
+.DS_Store
+agent-transcripts
