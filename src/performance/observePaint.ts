@@ -56,6 +56,8 @@ export function observePaint(
             };
 
             dispatchReport(reportData, onReport);
+
+            // disconnect 不会中断当前批次的遍历，上报后主动退出循环。
             break;
         }
     });

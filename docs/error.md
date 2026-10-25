@@ -12,9 +12,24 @@ observeError((report) => console.log(report));
 
 `observeError(onReport?)` 的 `onReport` 类型为 `(data: ErrorReportData) => void`，返回 `void`。没有 `window` 时直接返回；同一个 window 重复调用只更新回调。`stopObserveError()` 移除监听，并在 `window.onerror` 未被其他代码替换时恢复原处理器。
 
+错误监听不能回溯已经发生的错误。要监控页面中 `<script>` 标签的加载和执行错误，应尽早加载 SDK，并在业务脚本执行前调用 `observeError()`：
+
+```html
+<head>
+  <script src="/monitor-sdk.js"></script>
+  <script>
+    monitor.observeError();
+  </script>
+
+  <script src="/app.js"></script>
+</head>
+```
+
+`/app.js` 加载失败、同步执行异常及其未处理 Promise rejection 此后分别进入资源错误、JavaScript 异常和 Promise rejection 通道。如果业务脚本先于监控初始化执行，它在初始化前产生的错误无法上报。
+
 ## 2. 资源错误
 
-SDK 用 `window.addEventListener("error", handler, true)` 在捕获阶段观察 `<script>`、`<link>`、`<img>` 等资源。捕获阶段可以收到不一定冒泡的资源事件。
+SDK 用 `window.addEventListener("error", handler, true)` 在捕获阶段观察 `<script>`、`<link>`、`<img>` 等资源。资源加载失败触发的 `error` 事件不会冒泡，因此必须在捕获阶段监听。
 
 步骤：读取 `event.target`；优先取 `target.src`、其次取 `target.href`；没有地址则忽略；读取元素 HTML、页面 URL 和可序列化事件路径；分发。
 
@@ -32,7 +47,15 @@ interface ResourceErrorReportData {
 }
 ```
 
-`paths` 是节点名称而不是 DOM 对象，例如 `["SCRIPT", "BODY", "HTML", "Document", "Window"]`，避免循环引用。普通资源事件通常不给 HTTP 状态码，所以报告也不包含响应状态。
+`paths` 是节点名称而不是 DOM 对象，例如 `["SCRIPT", "BODY", "HTML", "Document", "Window"]`，避免循环引用。普通资源事件通常不给 HTTP 状态码，所以报告也不包含响应状态、响应内容或具体失败原因。
+
+例如，下面的脚本下载失败时会作为 `subType: "resource"` 上报，`url` 为脚本资源地址，`html` 为对应 `<script>` 元素的 HTML：
+
+```html
+<script src="/assets/not-exist.js"></script>
+```
+
+需要区分资源加载失败和脚本执行异常：前者的事件目标是 `<script>` 元素，进入资源错误通道；脚本成功加载后抛出的异常则由 `window.onerror` 捕获，进入 JavaScript 异常通道。
 
 录屏运行时，所有浏览器和框架错误类型还会带上可选的 `replayId`、`sessionId` 和 `replayOffset`。错误先上报；具备完整 snapshot 后，错误前回放片段也会立即上报，随后在同一 `replayId` 下继续录制错误后事件（默认最长 5 分钟，空闲 30 秒结束，并受事件数/体积上限约束）。详见 [Replay 会话录屏](replay.md)。
 
@@ -58,13 +81,30 @@ interface JavaScriptErrorReportData {
 }
 ```
 
-`message/source/line/column/error` 分别成为 `msg/url/lineNo/columnNo/stack`。跨域脚本可能只有 `Script error.`，属于浏览器同源策略限制。
+`message/source/line/column/error` 分别成为 `msg/url/lineNo/columnNo/stack`。内联脚本执行异常时，`url` 通常是当前 HTML 文档地址；外部脚本执行异常时，`url` 通常是对应脚本地址。
+
+跨域脚本未正确配置 CORS 时，浏览器可能只提供 `Script error.`，并隐藏文件地址、行列号和堆栈。要获取完整信息，需要同时在标签上声明 `crossorigin="anonymous"`，并让脚本服务器返回允许当前站点（或按部署策略允许所有来源）的 CORS 响应头：
+
+```html
+<script
+  src="https://cdn.example.com/app.js"
+  crossorigin="anonymous"
+></script>
+```
+
+```http
+Access-Control-Allow-Origin: https://app.example.com
+```
+
+只设置 `crossorigin` 或只返回 CORS 响应头都不足以解除该限制。
 
 配置 `release` 后，错误报告会带上发布版本。SDK 只上传浏览器原始 stack、文件 URL、行号和列号，SourceMap 解析由监控服务端完成。
 
 ## 4. Promise rejection
 
-SDK 监听 `unhandledrejection`，读取 `event.reason`，不调用 `preventDefault()`，所以不改变 Promise 行为。reason 转字符串的顺序是：字符串原样；`Error` 取 `stack` 或 `message`；普通对象尝试 `JSON.stringify`，失败则 `String`；其他值直接 `String`。
+SDK 监听 `unhandledrejection`，读取 `event.reason`，不调用 `preventDefault()`，所以不改变 Promise 行为。`<script>` 中未处理的 Promise rejection 同样通过此通道上报；已经被 `.catch()` 或 `try/catch` 处理的异常不会触发全局 `unhandledrejection`，因此不会由该监听器自动上报。
+
+reason 转字符串的顺序是：字符串原样；`Error` 取 `stack` 或 `message`；普通对象尝试 `JSON.stringify`，失败则 `String`；其他值直接 `String`。
 
 ```ts
 interface PromiseErrorReportData {
