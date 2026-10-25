@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import ReplayPlayer from "./ReplayPlayer.vue";
 import type { eventWithTime } from "@rrweb/types";
 
@@ -145,6 +145,7 @@ const errorSubType = ref("");
 const errorSearch = ref("");
 const errorResult = ref<ErrorResult | null>(null);
 const selectedError = ref<ErrorDetail | null>(null);
+const errorDetailPanel = ref<HTMLElement | null>(null);
 const replayResult = ref<ReplayResult | null>(null);
 const selectedReplay = ref<ReplayDetail | null>(null);
 const selectedReplayId = ref("");
@@ -474,6 +475,8 @@ async function openError(issue: ErrorIssue): Promise<void> {
     return;
   }
   selectedError.value = (await response.json()) as ErrorDetail;
+  await nextTick();
+  errorDetailPanel.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function setErrorStatus(status: ErrorIssue["status"]): Promise<void> {
@@ -702,7 +705,7 @@ onUnmounted(() => {
           <button type="button" :disabled="errorPage * errorResult.pageSize >= errorResult.total" @click="errorPage++">下一页</button>
         </div>
       </section>
-      <aside v-if="selectedError" class="detail-panel" aria-label="错误详情">
+      <aside v-if="selectedError" ref="errorDetailPanel" class="detail-panel" aria-label="错误详情">
         <div class="section-heading"><div><p class="eyebrow">Issue detail</p><h2>{{ selectedError.issue.message || "(无消息)" }}</h2></div><button class="close-button" type="button" aria-label="关闭详情" title="关闭详情" @click="selectedError = null">×</button></div>
         <div class="detail-actions">
           <button type="button" :class="{ selected: selectedError.issue.status === 'unresolved' }" @click="setErrorStatus('unresolved')">未解决</button>
