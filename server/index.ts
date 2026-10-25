@@ -50,7 +50,7 @@ export class InMemoryReportStore implements ReportStore {
 
 const DEFAULT_CORS_ORIGINS = "*";
 const CORS_HEADERS = {
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 };
 const REPORT_MAX_BYTES = 1 * 1024 * 1024;
@@ -642,6 +642,16 @@ export function createReportServer(
                 release: parsed.upload.release,
                 generatedFile: parsed.upload.generatedFile,
             }, headers);
+            return;
+        }
+
+        if (
+            request.method === "DELETE" &&
+            store instanceof SQLiteReportStore &&
+            url.pathname === "/api/v1/records"
+        ) {
+            const result = store.clearAll();
+            sendJson(response, 200, { status: "cleared", ...result }, headers);
             return;
         }
 

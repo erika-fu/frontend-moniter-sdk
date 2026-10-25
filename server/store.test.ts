@@ -196,4 +196,56 @@ describe("SQLiteReportStore", () => {
         });
         store.close();
     });
+
+    it("clears all monitoring records including errors, replays, and source maps", () => {
+        const path = `/tmp/monitoring-${Date.now()}-${Math.random()}.sqlite`;
+        paths.push(path);
+        const store = new SQLiteReportStore(path);
+        store.save(errorReport("keep", 10_000, { message: "clear me" }));
+        store.save({
+            ...report("replay-keep"),
+            timestamp: 10_000,
+            data: [{
+                type: "replay",
+                subType: "event",
+                replayId: "live-replay",
+                sessionId: "session",
+                replayOffset: 0,
+                event: { type: 2, timestamp: 10_000 },
+            }],
+        });
+        store.putSourceMap({
+            appId: "app-a",
+            release: "1.0.0",
+            generatedFile: "app.js",
+            sourceMap: {
+                version: 3,
+                file: "app.js",
+                sources: ["src/app.ts"],
+                mappings: "AAAA",
+            },
+        });
+
+        expect(store.clearAll()).toMatchObject({
+            envelopes: 2,
+            events: 2,
+            errors: 1,
+            replays: 1,
+            sourceMaps: 1,
+        });
+        expect(store.list()).toEqual([]);
+        expect(store.apps()).toEqual([]);
+        expect(store.queryEvents({ page: 1, pageSize: 10 }).total).toBe(0);
+        expect(store.queryErrors({ page: 1, pageSize: 10 }).total).toBe(0);
+        expect(store.queryReplays({ page: 1, pageSize: 10 }).total).toBe(0);
+        expect(store.listSourceMaps()).toEqual([]);
+        expect(store.clearAll()).toEqual({
+            envelopes: 0,
+            events: 0,
+            errors: 0,
+            replays: 0,
+            sourceMaps: 0,
+        });
+        store.close();
+    });
 });

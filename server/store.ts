@@ -1122,6 +1122,40 @@ export class SQLiteReportStore {
         return transaction();
     }
 
+    clearAll(): {
+        envelopes: number;
+        events: number;
+        errors: number;
+        replays: number;
+        sourceMaps: number;
+    } {
+        const transaction = this.database.transaction(() => {
+            this.database.prepare("DELETE FROM error_occurrences").run();
+            const eventResult = this.database.prepare("DELETE FROM events").run();
+            const envelopeResult = this.database.prepare(
+                "DELETE FROM envelopes",
+            ).run();
+            this.database.prepare("DELETE FROM replay_events").run();
+            const replayResult = this.database.prepare(
+                "DELETE FROM replay_sessions",
+            ).run();
+            const errorResult = this.database.prepare(
+                "DELETE FROM error_issues",
+            ).run();
+            const sourceMapResult = this.database.prepare(
+                "DELETE FROM source_maps",
+            ).run();
+            return {
+                envelopes: envelopeResult.changes,
+                events: eventResult.changes,
+                errors: errorResult.changes,
+                replays: replayResult.changes,
+                sourceMaps: sourceMapResult.changes,
+            };
+        });
+        return transaction();
+    }
+
     close(): void {
         this.database.close();
     }

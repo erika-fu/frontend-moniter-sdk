@@ -14,9 +14,13 @@ h1, h2 { margin: 0; }
 h1 { font-size: clamp(2rem, 5vw, 3.25rem); }
 h2 { font-size: 1.25rem; }
 .subtitle { margin: 10px 0 0; color: #5c6872; }
+.header-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .refresh-button { border: 1px solid #9aa8b4; border-radius: 4px; padding: 9px 13px; color: #17202a; background: #fff; cursor: pointer; }
 .refresh-button:hover { border-color: #477a9e; color: #477a9e; }
 .refresh-button span { margin-right: 6px; font-size: 1.1rem; }
+.danger-button { border: 1px solid #c46a5a; border-radius: 4px; padding: 9px 13px; color: #a33a2b; background: #fff; cursor: pointer; }
+.danger-button:hover:not(:disabled) { border-color: #a33a2b; background: #fff0ed; }
+.danger-button:disabled { cursor: wait; opacity: .6; }
 .view-tabs { display: flex; gap: 24px; border-bottom: 1px solid #d7dde3; margin-top: 24px; }
 .view-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 12px 2px; color: #5c6872; background: transparent; cursor: pointer; }
 .view-tabs button.active { border-color: #477a9e; color: #17202a; font-weight: 700; }
@@ -116,7 +120,9 @@ code { display: block; max-width: 280px; overflow: hidden; color: #47545e; font-
 @media (max-width: 760px) {
   main { width: min(100% - 28px, 1180px); padding-top: 28px; }
   .page-header, .section-heading { align-items: start; flex-direction: column; }
-  .refresh-button { width: 100%; }
+  .header-actions { width: 100%; }
+  .header-actions .refresh-button,
+  .header-actions .danger-button { width: 100%; }
   .filters { grid-template-columns: 1fr 1fr; }
   .error-filters { grid-template-columns: 1fr; }
   .source-map-upload { grid-template-columns: 1fr; }

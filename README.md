@@ -1,21 +1,20 @@
 # frontend-moniter-sdk
 
-TypeScript SDK for frontend monitoring.
+前端监控 TypeScript SDK。
 
-## Requirements
+## 环境要求
 
-- Node.js 18 or newer
+- Node.js 18 或更高版本
 - npm
 
-## Development
+## 开发
 
 ```bash
 npm install
 npm run check
-
 ```
 
-## Workspace commands
+## Workspace 命令
 
 SDK、server、platform 和 demo 通过 npm workspaces 管理：
 
@@ -25,13 +24,13 @@ npm test
 npm run build:all
 ```
 
-各应用可以独立启动：
+各应用可独立启动：
 
 ```bash
 npm run dev:server       # http://localhost:9800
 npm run dev:platform     # http://localhost:4175
-npm run dev:demo         # http://localhost:4173
-npm run dev:react-demo   # http://localhost:4174
+npm run dev:demo         # http://localhost:4173（Vite 开发服）
+npm run dev:react-demo   # http://localhost:4174（Vite 开发服）
 npm run cleanup          # 清理超过 RETENTION_DAYS 的 SQLite 数据
 ```
 
@@ -70,32 +69,30 @@ demo 还将普通监控报告的 `batchSize` 固定为 `1`，因此每批发送 
 完整链路验收可运行 `npm run test:e2e`，会模拟 demo 的版本化信封，并从
 server 提供给 platform 的错误、性能和回放 API 查询结果。
 
-## Commands
+## 常用命令
 
-- `npm run build` creates minified ESM, CommonJS, IIFE, and bundled declarations
-  in `dist/`
-- `npm run server` starts the report receiver on port `9800`
-- `npm test` runs the test suite once
-- `npm run test:watch` runs Vitest in watch mode
-- `npm run typecheck` checks TypeScript without emitting files
-- `npm run check` runs type checking, tests, and the production build
-- `npm pack --dry-run` previews the files that will be published
-- `npm publish` runs `prepublishOnly`, then publishes the production package
+- `npm run build`：在 `dist/` 生成压缩后的 ESM、CommonJS、IIFE 与类型声明
+- `npm run server`：在端口 `9800` 启动报告接收服务
+- `npm test`：跑一遍测试
+- `npm run test:watch`：Vitest 监听模式
+- `npm run typecheck`：只做 TypeScript 检查，不产出文件
+- `npm run check`：类型检查 + 测试 + 生产构建
+- `npm pack --dry-run`：预览将要发布的文件
+- `npm publish`：执行 `prepublishOnly` 后发布生产包
 
-The production build emits:
+生产构建产物：
 
-- `dist/index.js` for ESM consumers
-- `dist/index.cjs` for CommonJS consumers
-- `dist/index.iife.js` for direct browser use as `FrontendMonitor`
-- `dist/index.d.ts` for TypeScript declarations
+- `dist/index.js`：ESM
+- `dist/index.cjs`：CommonJS
+- `dist/index.iife.js`：浏览器直接使用，全局名 `FrontendMonitor`
+- `dist/index.d.ts`：TypeScript 声明
 
-ESM and CommonJS keep `web-vitals` external so package managers can deduplicate
-it. The IIFE build includes `web-vitals` and can run as a standalone script.
+ESM / CommonJS 将 `web-vitals` 保持为 external，便于包管理器去重。IIFE 会打包
+`web-vitals`，可独立作为脚本运行。
 
-## Usage
+## 使用方式
 
-Initialize browser performance and runtime error monitoring with built-in
-batched reporting:
+初始化浏览器性能与运行时错误监控，并使用内置批量上报：
 
 ```ts
 import frontendMonitor from "frontend-moniter-sdk";
@@ -127,11 +124,10 @@ SDK 批量发送报告，优先使用 `navigator.sendBeacon`，再回退到未�
 `frontendMonitor.subscribe(handler)` 仍可在本地接收单条报告。传输被接受或安排
 不等于服务端已经持久化。
 
-Session replay uses rrweb. It masks all input values by default and blocks
-elements with the `monitor-block` class or `data-monitor-mask` attribute.
-Events stay in memory until an error; then the SDK uploads the pre-error
-segment immediately and keeps recording on the same `replayId` (default max
-5 minutes, or 30 seconds of idle) within the 1000-event / 5 MiB limits:
+Session replay 基于 rrweb。默认遮蔽所有输入值，并屏蔽带 `monitor-block` class
+或 `data-monitor-mask` 属性的元素。事件先留在内存中，直到发生错误；随后 SDK
+立即上传错误前片段，并在同一 `replayId` 上继续录制（默认最长 5 分钟，或空闲
+30 秒），同时受 1000 事件 / 5 MiB 限制：
 
 ```ts
 frontendMonitor.replay({
@@ -143,19 +139,16 @@ frontendMonitor.replay({
 });
 ```
 
-Runtime error reports collected during replay include `sessionId`,
-`replayId`, and `replayOffset`, allowing a report viewer to open the session
-at the error position. See [Replay 会话录屏](docs/replay.md) for privacy and
-playback integration details.
+回放期间采集的运行时错误会带上 `sessionId`、`replayId` 和 `replayOffset`，方便
+在报告查看器中跳到错误位置。隐私与播放接入见 [Replay 会话录屏](docs/replay.md)。
 
-Install Vue error capture through the application plugin API. It reuses the
-configuration provided to `init`:
+通过 Vue 应用插件接入错误捕获（复用 `init` 的配置）：
 
 ```ts
 app.use(frontendMonitor);
 ```
 
-Forward errors from a React Error Boundary:
+从 React Error Boundary 转发错误：
 
 ```ts
 componentDidCatch(error, info) {
@@ -163,32 +156,102 @@ componentDidCatch(error, info) {
 }
 ```
 
-The public package API starts in `src/index.ts`. `init` only updates the default
-reporting configuration; it does not start monitors or select individual
-metrics. Call the monitor APIs directly when the application needs to start
-collection.
+对外 API 入口在 `src/index.ts`。`init` 只更新默认上报配置，不会启动监控或选择
+具体指标；需要采集时请直接调用各监控 API。
 
-The production build uses Vite library mode for the browser-ready ESM bundle
-and TypeScript for declaration files. The package exposes the SDK through its
-root ESM entry and declares `web-vitals` as an external runtime dependency.
-Installing the package therefore installs `web-vitals` in the business
-application. Vue remains a development dependency only because the SDK's Vue
-integration is covered by tests.
+生产构建使用 Vite library 模式产出浏览器可用的 ESM，并用 TypeScript 生成声明。
+包通过根 ESM 入口暴露 SDK，并将 `web-vitals` 声明为运行时依赖，因此安装本包会
+一并安装 `web-vitals`。Vue 仅作为开发依赖，因为 Vue 集成由测试覆盖。
 
-The `demo/` directory is an independent Vue application with its own package
-manifest, lock file, TypeScript configuration, Vite configuration, and build
-output. It imports the SDK directly from `src/index.ts`, so SDK source changes
-are reflected without building the package first. Root installation includes all
-workspace dependencies:
+`demo/` 是独立的 Vue 应用，有自己的 package 清单、锁文件、TS / Vite 配置和构建
+产物。它直接从 `src/index.ts` 引入 SDK，因此改 SDK 源码无需先构建包即可生效。
+根目录安装会装上所有 workspace 依赖：
 
 ```bash
 npm install
 npm run dev:demo
 ```
 
-Then visit `http://localhost:4173/`.
+然后访问 `http://localhost:4173/`。
 
-## Documentation
+## 本地联调 Source Map（demo / server / platform）
+
+服务端解析 Source Map 依赖三个键对齐：
+
+| 键 | 来源 | 必须一致 |
+|----|------|----------|
+| `appId` | SDK 上报信封 | 与 platform 当前选中的应用相同（demo 默认 `vue-demo`） |
+| `release` | SDK 上报信封 | 与上传表单「发布版本」相同（demo 默认 `demo@0.1.0`） |
+| 生成文件名 | 错误堆栈里的 JS 路径 | 与上传表单「对应生成文件」相同（如 `index-xxxxx.js`） |
+
+匹配规则：堆栈中的文件路径与 `generatedFile` 做路径尾部比较（例如
+`http://localhost:4173/assets/index-xxxxx.js` 可匹配 `index-xxxxx.js`）。
+
+### 为什么 `npm run dev:demo` 解不开
+
+`dev` 走 Vite 开发服，模块直接是 `/src/...`，`Error.stack` 通常类似：
+
+```text
+at http://localhost:4173/src/scenarios.ts:15:11
+```
+
+这不是打包后的生成文件，上传 `index-xxxxx.js.map` 也无法匹配。  
+要验证「服务端 Source Map」，必须用 **生产构建 + preview**。
+
+### 1. Demo：产出打包文件并上报「未还原」的栈
+
+```bash
+npm run build:demo
+npm --workspace demo run preview
+# 打开 http://localhost:4173
+```
+
+- Vue demo 预览端口是 **4173**；**4174** 是 react-demo。
+- 构建产物在 `demo/dist/assets/`，形如 `index-xxxxx.js` 与 `index-xxxxx.js.map`。
+- 在 Chrome DevTools → Settings 中**关闭** “Enable JavaScript source maps”，再硬刷新页面并触发一次 JS 错误。
+- 期望上报堆栈类似：
+
+```text
+at http://localhost:4173/assets/index-xxxxx.js:144:24258
+```
+
+若仍看到 `src/scenarios.ts`，说明浏览器已用页面自带的 `.map` 还原了栈，服务端会显示「未找到对应生成文件」。
+
+### 2. Server：自动存储与解析（无需额外操作）
+
+保持上报接收服务运行：
+
+```bash
+npm run dev:server
+# http://localhost:9800
+```
+
+server 会：
+
+1. 接收 SDK 信封并入库；
+2. 通过 `POST /api/v1/source-maps` 按 `(appId, release, generatedFile)` 持久化 map；
+3. 查询错误详情时，用 issue 的 `appId` + `release` 筛选 map，再按堆栈文件名匹配，将行列还原为源码位置。
+
+「清除所有记录」会删除事件、错误、回放和 Source Map。应用下拉选项来自已有上报的
+`envelopes`，清空后需先让 demo 再上报一次，应用列表才会重新出现。
+
+### 3. Platform：上传与错误详情查看
+
+```bash
+npm run dev:platform
+# http://localhost:4175
+```
+
+1. 选择应用 `vue-demo`（需已有上报）。
+2. 打开 **Source Map**，填写：
+   - 发布版本：`demo@0.1.0`
+   - Source Map 文件：`demo/dist/assets/index-xxxxx.js.map`
+   - 对应生成文件：`index-xxxxx.js`（与堆栈中的文件名一致；可带或不带 `assets/`）
+3. 上传成功后，到 **错误事项** 打开对应 issue；`resolutionStatus` 应为已解析，并显示原始文件/行号。
+
+每次重新 `build:demo` 后，带 hash 的文件名可能变化，需按**新文件名**重新上传 map。
+
+## 文档
 
 - [业务侧使用说明](docs/business-usage.md)：安装、初始化、配置、上传、Vue/React 和 SPA PV 接入
 - [Performance 性能监控](docs/performance.md)：FP、FCP、LCP、load、resource、Fetch、XHR
@@ -199,7 +262,7 @@ Then visit `http://localhost:4173/`.
 - [SDK 入口与内部链路](docs/sdk-internals.md)：统一分发、缓存、订阅、传输、History 包装和事件路径
 - [Server 服务端文档](docs/server.md)：启动、版本化上报、SQLite、查询 API、SourceMap、错误和回放
 
-## Report server
+## 报告服务
 
 仓库提供一个基于 Node.js 和 SQLite 的本地报告服务。推荐使用版本化入口：
 

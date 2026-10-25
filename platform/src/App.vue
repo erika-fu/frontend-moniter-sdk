@@ -171,6 +171,7 @@ const performanceLoading = ref(false);
 const loading = ref(true);
 const error = ref("");
 const refreshingEvents = ref(false);
+const clearingRecords = ref(false);
 let refreshTimer: number | undefined;
 
 const selectedApp = computed(() =>
@@ -493,6 +494,43 @@ async function setErrorStatus(status: ErrorIssue["status"]): Promise<void> {
   await loadErrors();
 }
 
+async function reloadCurrentView(manual = false): Promise<void> {
+  if (view.value === "errors") await loadErrors();
+  else if (view.value === "performance") await loadPerformance();
+  else if (view.value === "replay") await loadReplays();
+  else if (view.value === "sourceMaps") await loadSourceMaps();
+  else await loadOverview(manual);
+}
+
+async function clearAllRecords(): Promise<void> {
+  const confirmed = window.confirm(
+    "确认清除所有监控记录吗？这将删除事件、错误、回放和 Source Map，且无法恢复。",
+  );
+  if (!confirmed) return;
+  clearingRecords.value = true;
+  error.value = "";
+  try {
+    const response = await fetch(`${apiUrl}/api/v1/records`, { method: "DELETE" });
+    if (!response.ok) throw new Error("清除监控记录失败");
+    selectedError.value = null;
+    selectedReplay.value = null;
+    selectedReplayId.value = "";
+    selectedAppId.value = "";
+    overview.value = null;
+    performance.value = null;
+    errorResult.value = null;
+    replayResult.value = null;
+    sourceMaps.value = [];
+    sourceMapLoaded.value = false;
+    await loadApps();
+    await reloadCurrentView();
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "清除监控记录失败";
+  } finally {
+    clearingRecords.value = false;
+  }
+}
+
 async function initialize(): Promise<void> {
   try {
     await loadApps();
@@ -544,9 +582,19 @@ onUnmounted(() => {
         <h1>监控总览</h1>
         <p class="subtitle">{{ selectedApp?.projectName || "选择一个应用查看上报事件" }}</p>
       </div>
-      <button class="refresh-button" type="button" @click="view === 'errors' ? loadErrors() : view === 'performance' ? loadPerformance() : view === 'replay' ? loadReplays() : view === 'sourceMaps' ? loadSourceMaps() : loadOverview(true)">
-        <span aria-hidden="true">↻</span> 刷新事件
-      </button>
+      <div class="header-actions">
+        <button
+          class="danger-button"
+          type="button"
+          :disabled="clearingRecords"
+          @click="clearAllRecords"
+        >
+          {{ clearingRecords ? "清除中..." : "清除所有记录" }}
+        </button>
+        <button class="refresh-button" type="button" @click="reloadCurrentView(true)">
+          <span aria-hidden="true">↻</span> 刷新事件
+        </button>
+      </div>
     </header>
 
     <nav class="view-tabs" aria-label="监控模块">

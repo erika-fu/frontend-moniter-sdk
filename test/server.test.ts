@@ -413,6 +413,55 @@ describe("report server", () => {
         ]));
     });
 
+    it("clears all stored monitoring records through DELETE /api/v1/records", async () => {
+        const databasePath = `/tmp/monitoring-clear-${Date.now()}-${Math.random()}.sqlite`;
+        const { baseUrl, server } = await startServer(vi.fn(), { databasePath });
+        const report = {
+            protocolVersion: 1,
+            id: "clear-id",
+            appId: "clear-app",
+            projectName: "Clear project",
+            sessionId: "session",
+            timestamp: 1000,
+            release: "1.0.0",
+            user: { id: "user" },
+            environment: { url: "/clear", userAgent: "test", language: "zh-CN" },
+            data: [{ type: "error", subType: "js", message: "to-clear" }],
+        };
+
+        expect((await fetch(`${baseUrl}/api/v1/reportData`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(report),
+        })).status).toBe(202);
+
+        const cleared = await fetch(`${baseUrl}/api/v1/records`, {
+            method: "DELETE",
+        });
+        expect(cleared.status).toBe(200);
+        expect(await cleared.json()).toMatchObject({
+            status: "cleared",
+            envelopes: 1,
+            events: 1,
+            errors: 1,
+        });
+
+        const overview = await fetch(`${baseUrl}/api/v1/overview?appId=clear-app`);
+        expect(overview.status).toBe(200);
+        expect(await overview.json()).toMatchObject({
+            summary: { total: 0, byType: [] },
+            events: { total: 0 },
+        });
+        expect(await (await fetch(`${baseUrl}/api/v1/apps`)).json()).toEqual([]);
+
+        await stopServer(server);
+        try {
+            unlinkSync(databasePath);
+        } catch {
+            // SQLite may keep the Windows file handle briefly after close.
+        }
+    });
+
     it("keeps HTTP-ingested history queryable after a server restart", async () => {
         const databasePath = `/tmp/monitoring-http-${Date.now()}-${Math.random()}.sqlite`;
         const first = await startServer(vi.fn(), { databasePath });
