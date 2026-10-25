@@ -179,8 +179,12 @@ interface ReactErrorReportData {
 ```
 
 ## 7. 服务端堆栈还原
+上传的stack中又generator file的地址，是构建后生成的js，再上传map，获取正确位置。
+要appid release版本 hash值一样时 可以进行stack的解析 最终再platform对比行号 高亮出错的地方
 
-仓库提供的 `createReportServer` 在接收批量报告后使用 `error-stack-parser` 生成 `stackFrames`，再使用 `source-map-js` 查询 SourceMap。SQLite server 会保留原始 `rawStack`，并在查询 issue 时返回 `stackFrames` 和 `resolutionStatus`；不会用映射结果覆盖原始 stack。SourceMap 可以通过持久化 API 按 `appId`、`release` 和 generated file 上传，也可以为嵌入式 server 配置外部 URL：
+仓库提供的 `createReportServer` 在接收批量报告后使用 `error-stack-parser` 生成 `stackFrames`，一帧 = 某次函数调用的位置；多层帧 = 错误发生时的完整调用链。就是调用链上的链路
+
+再使用 `source-map-js` 查询 SourceMap。SQLite server 会保留原始 `rawStack`，并在查询 issue 时返回 `stackFrames` 和 `resolutionStatus`；不会用映射结果覆盖原始 stack。SourceMap 可以通过持久化 API 按 `appId`、`release` 和 generated file 上传，也可以为嵌入式 server 配置外部 URL：
 
 ```ts
 createReportServer({
