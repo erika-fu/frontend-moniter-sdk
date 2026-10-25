@@ -16,7 +16,10 @@ npm run check
 
 ## 线上 Demo（Fly.io）
 
-同源单应用 `frontend-moniter-demo`：`/` 为 demo，`/platform/` 为看板，`/api/v1` 为上报与查询。部署步骤见 [docs/deploy-demo.md](docs/deploy-demo.md)。
+- Demo：https://frontend-moniter-demo.fly.dev/
+- 监控平台：https://frontend-moniter-demo.fly.dev/platform/
+
+同源单应用：`/` 为 demo，`/platform/` 为看板，`/api/v1` 为上报与查询。部署步骤见 [docs/deploy-demo.md](docs/deploy-demo.md)。
 
 ## Workspace 命令
 
